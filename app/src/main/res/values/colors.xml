@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Brand -->
+    <color name="orange">#FF6B2C</color>
+    <color name="orange_dark">#CC4A14</color>
+    <color name="orange_dim">#26FF6B2C</color>
+
+    <!-- Backgrounds -->
+    <color name="bg_0">#0D0D0F</color>
+    <color name="bg_1">#13141A</color>
+    <color name="bg_2">#1A1B24</color>
+    <color name="bg_3">#22232F</color>
+
+    <!-- Text -->
+    <color name="text_primary">#F0F0F5</color>
+    <color name="text_secondary">#9999B0</color>
+
+    <!-- Status -->
+    <color name="green">#22C55E</color>
+    <color name="amber">#F59E0B</color>
+    <color name="red">#EF4444</color>
+    <color name="blue">#3B82F6</color>
+
+    <!-- Launcher -->
+    <color name="ic_launcher_background">#13141A</color>
+</resources>
