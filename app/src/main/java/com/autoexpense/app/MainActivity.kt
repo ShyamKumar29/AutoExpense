@@ -2,9 +2,11 @@
 
 package com.autoexpense.app
 
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -36,11 +38,13 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.withContext
 
 import androidx.compose.runtime.collectAsState
 import androidx.lifecycle.ViewModel
@@ -69,6 +73,15 @@ import com.autoexpense.app.notification.NotificationProcessor
 import com.autoexpense.app.data.AutoExpenseDatabase
 import com.autoexpense.app.data.TransactionDao
 import com.autoexpense.app.data.TransactionEntity
+import com.autoexpense.app.data.PeriodType
+import com.autoexpense.app.budget.BudgetLevel
+import com.autoexpense.app.budget.BudgetNotificationHelper
+import com.autoexpense.app.budget.BudgetRepositorySingleton
+import com.autoexpense.app.budget.BudgetViewModel
+import com.autoexpense.app.budget.BudgetWithSpending
+import com.autoexpense.app.budget.BudgetWarning
+import com.autoexpense.app.budget.computeLevel
+import com.autoexpense.app.budget.BudgetScreen
 
 // ── COLOR PALETTE ──────────────────────────────────────────────────────────
 val ColorBg0 = Color(0xFF0D0D0F)
@@ -253,8 +266,21 @@ class ProfileViewModel : ViewModel() {
 
 // ── MAIN ACTIVITY ────────────────────────────────────────────────────────
 class MainActivity : ComponentActivity() {
+
+    // Request POST_NOTIFICATIONS for Android 13+
+    private val notifPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { /* result handled silently; warnings will retry */ }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS)
+                != android.content.pm.PackageManager.PERMISSION_GRANTED
+            ) {
+                notifPermissionLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+            }
+        }
         setContent {
             AutoExpenseTheme {
                 MainAppContainer()
@@ -268,7 +294,8 @@ fun MainAppContainer(
     dashboardViewModel: DashboardViewModel = viewModel(),
     receiptsViewModel: ReceiptsViewModel = viewModel(),
     reviewViewModel: ReviewViewModel = viewModel(),
-    profileViewModel: ProfileViewModel = viewModel()
+    profileViewModel: ProfileViewModel = viewModel(),
+    budgetViewModel: BudgetViewModel = viewModel()
 ) {
     var isUserLoggedIn by remember { mutableStateOf(false) }
     var activeScreen by remember { mutableStateOf("dashboard") }
@@ -317,9 +344,11 @@ fun MainAppContainer(
                     "receipts" -> ReceiptsLedgerScreen(viewModel = receiptsViewModel)
                     "review" -> NeedsReviewScreen(
                         viewModel = reviewViewModel,
+                        budgetViewModel = budgetViewModel,
                         snackbarHostState = snackbarHostState,
                         onBackToDashboard = { activeScreen = "dashboard" }
                     )
+                    "budget" -> BudgetScreen(viewModel = budgetViewModel)
                     "profile" -> ProfileScreen(
                         viewModel = profileViewModel,
                         onNavigateBack = { activeScreen = "dashboard" }
@@ -384,6 +413,19 @@ fun AppBottomBar(
                 }
             },
             label = { Text("Review") },
+            colors = NavigationBarItemDefaults.colors(
+                selectedIconColor = ColorOrange,
+                selectedTextColor = ColorOrange,
+                unselectedIconColor = ColorText2,
+                unselectedTextColor = ColorText2,
+                indicatorColor = ColorOrangeDim
+            )
+        )
+        NavigationBarItem(
+            selected = activeScreen == "budget",
+            onClick = { onNavigate("budget") },
+            icon = { Icon(Icons.Default.AccountBalance, contentDescription = "Budget") },
+            label = { Text("Budget") },
             colors = NavigationBarItemDefaults.colors(
                 selectedIconColor = ColorOrange,
                 selectedTextColor = ColorOrange,
@@ -604,13 +646,13 @@ fun DashboardScreen(
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 OutlinedButton(
-                    onClick = {},
-                    border = BorderStroke(1.dp, ColorBg3),
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = ColorText2),
+                    onClick = { onNavigate("budget") },
+                    border = BorderStroke(1.dp, ColorOrange.copy(alpha = 0.4f)),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = ColorOrange),
                     shape = RoundedCornerShape(8.dp),
                     modifier = Modifier.weight(1f)
                 ) {
-                    Icon(Icons.Default.AttachMoney, contentDescription = null, tint = ColorOrange)
+                    Icon(Icons.Default.AccountBalance, contentDescription = null, tint = ColorOrange)
                     Spacer(modifier = Modifier.width(4.dp))
                     Text("Budget", maxLines = 1, fontSize = 12.sp)
                 }
@@ -1072,13 +1114,17 @@ fun ReceiptsLedgerScreen(viewModel: ReceiptsViewModel) {
 @Composable
 fun NeedsReviewScreen(
     viewModel: ReviewViewModel,
+    budgetViewModel: BudgetViewModel,
     snackbarHostState: SnackbarHostState,
     onBackToDashboard: () -> Unit
 ) {
+    // Session-local set for dedup (cleared when process dies)
+    val seenWarningKeys = remember { mutableSetOf<String>() }
     val reviewTxns by viewModel.pendingTransactions.collectAsState()
     var currentSuggestionId by remember { mutableStateOf("") }
     var thinkingForCardId by remember { mutableStateOf("") }
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
 
     Column(
         modifier = Modifier
@@ -1164,7 +1210,45 @@ fun NeedsReviewScreen(
                                 onConfirm = { selectedCat ->
                                     viewModel.confirmTransaction(t.id, selectedCat)
                                     scope.launch {
-                                        snackbarHostState.showSnackbar("Expense categorized successfully")
+                                        // Parse raw amount from stored string e.g. "−₹450" -> 450.0
+                                        val rawAmt = t.amount
+                                            .replace("−₹", "")
+                                            .replace(",", "")
+                                            .trim()
+                                            .toDoubleOrNull() ?: 0.0
+
+                                        // Small delay so Room flush completes
+                                        delay(300)
+                                        budgetViewModel.refreshSpending()
+
+                                        val warnings = withContext(Dispatchers.IO) {
+                                            BudgetRepositorySingleton.instance.checkBudgetWarnings(
+                                                category = selectedCat,
+                                                amount   = rawAmt,
+                                                seenWarningKeys = seenWarningKeys
+                                            )
+                                        }
+
+                                        if (warnings.isEmpty()) {
+                                            snackbarHostState.showSnackbar("Expense categorized successfully")
+                                        } else {
+                                            // Show most-severe warning first
+                                            val primary = warnings.first()
+                                            snackbarHostState.showSnackbar(
+                                                message     = primary.message,
+                                                actionLabel = if (warnings.size > 1) "More" else null,
+                                                duration    = SnackbarDuration.Long
+                                            )
+
+                                            // Send Android notification for each warning
+                                            warnings.forEachIndexed { idx, w ->
+                                                BudgetNotificationHelper.sendWarning(
+                                                    context        = context,
+                                                    warning        = w,
+                                                    notificationId = (w.budgetId * 10 + idx).toInt()
+                                                )
+                                            }
+                                        }
                                     }
                                 },
                                 onIgnore = {
