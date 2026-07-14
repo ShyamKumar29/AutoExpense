@@ -130,7 +130,8 @@ data class Transaction(
     var status: String, // "confirmed", "review", "ignored"
     // Phase 2: populated only for notification-detected transactions.
     val notificationExcerpt: String = "",
-    val detectionReason: String = ""
+    val detectionReason: String = "",
+    val timestamp: Long = 0L
 )
 
 // ── TRANSACTION REPOSITORY (Single Source of Truth) ─────────────────────────
@@ -194,25 +195,248 @@ object TransactionRepository {
 }
 
 // ── VIEWMODELS ─────────────────────────────────────────────────────────────
+data class CashFlowChartData(
+    val labels: List<String>,
+    val values: List<Float>,
+    val totalFormatted: String
+)
+
+data class TopCategoryData(
+    val label: String,
+    val subText: String
+)
+
+data class UpiSourcesData(
+    val label: String,
+    val subText: String
+)
+
 class DashboardViewModel : ViewModel() {
     val transactions: StateFlow<List<Transaction>> = TransactionRepository.transactions
 
-    val totalSpent: StateFlow<String> = transactions.map { list ->
-        val sum = list.filter { it.status == "confirmed" }.sumOf {
-            it.amount.replace("−₹", "").replace(",", "").trim().toDoubleOrNull() ?: 0.0
+    companion object {
+        fun isConfirmedOutgoingExpense(t: Transaction): Boolean {
+            if (!t.status.equals("confirmed", ignoreCase = true)) return false
+            val lowerStatus = t.status.lowercase(java.util.Locale.US)
+            if (lowerStatus == "review" || lowerStatus == "ignored" || lowerStatus == "failed" || lowerStatus == "refund" || lowerStatus == "incoming" || lowerStatus == "duplicate") {
+                return false
+            }
+            val lowerDesc = "${t.merchant} ${t.detectionReason} ${t.notificationExcerpt}".lowercase(java.util.Locale.US)
+            if (lowerDesc.contains("refund") || lowerDesc.contains("incoming payment") || lowerDesc.contains("credit received") || lowerDesc.contains("failed") || lowerDesc.contains("duplicate")) {
+                return false
+            }
+            val amtStr = t.amount.trim()
+            if (amtStr.startsWith("+") || amtStr.contains("+₹")) {
+                return false
+            }
+            return true
         }
-        "₹" + String.format(java.util.Locale.US, "%,.2f", sum)
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), "₹0.00")
+
+        fun parseAmount(amountStr: String): Double {
+            return amountStr.replace("−₹", "")
+                .replace("-₹", "")
+                .replace("₹", "")
+                .replace("−", "")
+                .replace("-", "")
+                .replace(",", "")
+                .trim()
+                .toDoubleOrNull() ?: 0.0
+        }
+
+        fun formatSourceName(source: String): String {
+            return when (source.lowercase(java.util.Locale.US)) {
+                "gpay", "googlepay" -> "GPay"
+                "phonepe" -> "PhonePe"
+                "paytm" -> "Paytm"
+                "bhim" -> "BHIM"
+                "banksms", "sms" -> "Bank SMS"
+                else -> if (source.isNotBlank()) source.replaceFirstChar { if (it.isLowerCase()) it.titlecase(java.util.Locale.US) else it.toString() } else "Other"
+            }
+        }
+
+        fun getCurrentMonthBounds(nowMs: Long = System.currentTimeMillis()): Pair<Long, Long> {
+            val cal = java.util.Calendar.getInstance().apply {
+                timeInMillis = nowMs
+                set(java.util.Calendar.DAY_OF_MONTH, 1)
+                set(java.util.Calendar.HOUR_OF_DAY, 0)
+                set(java.util.Calendar.MINUTE, 0)
+                set(java.util.Calendar.SECOND, 0)
+                set(java.util.Calendar.MILLISECOND, 0)
+            }
+            val start = cal.timeInMillis
+            cal.add(java.util.Calendar.MONTH, 1)
+            cal.add(java.util.Calendar.MILLISECOND, -1)
+            val end = cal.timeInMillis
+            return Pair(start, end)
+        }
+
+        fun getPreviousMonthBounds(currentMonthStartMs: Long): Pair<Long, Long> {
+            val cal = java.util.Calendar.getInstance().apply {
+                timeInMillis = currentMonthStartMs
+                add(java.util.Calendar.MILLISECOND, -1)
+            }
+            val end = cal.timeInMillis
+            cal.set(java.util.Calendar.DAY_OF_MONTH, 1)
+            cal.set(java.util.Calendar.HOUR_OF_DAY, 0)
+            cal.set(java.util.Calendar.MINUTE, 0)
+            cal.set(java.util.Calendar.SECOND, 0)
+            cal.set(java.util.Calendar.MILLISECOND, 0)
+            val start = cal.timeInMillis
+            return Pair(start, end)
+        }
+
+        fun getMondayOfWeek(nowMs: Long = System.currentTimeMillis()): Long {
+            val cal = java.util.Calendar.getInstance().apply {
+                timeInMillis = nowMs
+                firstDayOfWeek = java.util.Calendar.MONDAY
+            }
+            val dow = cal.get(java.util.Calendar.DAY_OF_WEEK)
+            val daysFromMon = (dow - java.util.Calendar.MONDAY + 7) % 7
+            cal.add(java.util.Calendar.DAY_OF_MONTH, -daysFromMon)
+            cal.set(java.util.Calendar.HOUR_OF_DAY, 0)
+            cal.set(java.util.Calendar.MINUTE, 0)
+            cal.set(java.util.Calendar.SECOND, 0)
+            cal.set(java.util.Calendar.MILLISECOND, 0)
+            return cal.timeInMillis
+        }
+
+        fun computeConfirmedOutgoing(list: List<Transaction>): List<Transaction> {
+            return list.filter { isConfirmedOutgoingExpense(it) }.distinctBy { it.id }
+        }
+
+        fun computeTotalSpent(list: List<Transaction>, nowMs: Long = System.currentTimeMillis()): String {
+            val confirmed = computeConfirmedOutgoing(list)
+            val (start, end) = getCurrentMonthBounds(nowMs)
+            val sum = confirmed.filter { it.timestamp in start..end }.sumOf { parseAmount(it.amount) }
+            return "₹" + if (sum == 0.0) "0" else String.format(java.util.Locale.US, "%,.2f", sum)
+        }
+
+        fun computeVsLastMonth(list: List<Transaction>, nowMs: Long = System.currentTimeMillis()): Pair<String, Color> {
+            val confirmed = computeConfirmedOutgoing(list)
+            val (thisStart, thisEnd) = getCurrentMonthBounds(nowMs)
+            val (lastStart, lastEnd) = getPreviousMonthBounds(thisStart)
+            val thisSum = confirmed.filter { it.timestamp in thisStart..thisEnd }.sumOf { parseAmount(it.amount) }
+            val lastSum = confirmed.filter { it.timestamp in lastStart..lastEnd }.sumOf { parseAmount(it.amount) }
+
+            return if (lastSum == 0.0) {
+                if (thisSum == 0.0) {
+                    Pair("0% vs last month", ColorText2)
+                } else {
+                    Pair("+100% vs last month", ColorAmber)
+                }
+            } else {
+                val pct = ((thisSum - lastSum) / lastSum) * 100.0
+                val text = if (pct >= 0) String.format(java.util.Locale.US, "+%.0f%% vs last month", pct) else String.format(java.util.Locale.US, "%.0f%% vs last month", pct)
+                val color = if (pct <= 0) ColorGreen else ColorAmber
+                Pair(text, color)
+            }
+        }
+
+        fun computeTopCategory(list: List<Transaction>, nowMs: Long = System.currentTimeMillis()): TopCategoryData {
+            val confirmed = computeConfirmedOutgoing(list)
+            val (start, end) = getCurrentMonthBounds(nowMs)
+            val monthTxns = confirmed.filter { it.timestamp in start..end }
+            if (monthTxns.isEmpty()) {
+                return TopCategoryData("None", "₹0 · 0 txns")
+            }
+            val grouped = monthTxns.groupBy { it.category }
+            val maxEntry = grouped.maxByOrNull { entry -> entry.value.sumOf { parseAmount(it.amount) } }
+            if (maxEntry != null) {
+                val catName = maxEntry.key.ifBlank { "Other" }
+                val catSum = maxEntry.value.sumOf { parseAmount(it.amount) }
+                val count = maxEntry.value.size
+                val sumStr = "₹" + if (catSum == 0.0) "0" else String.format(java.util.Locale.US, "%,.0f", catSum)
+                return TopCategoryData(catName, "$sumStr · $count " + if (count == 1) "txn" else "txns")
+            }
+            return TopCategoryData("None", "₹0 · 0 txns")
+        }
+
+        fun computeUpiSources(list: List<Transaction>): UpiSourcesData {
+            val confirmed = computeConfirmedOutgoing(list)
+            val sources = confirmed.map { formatSourceName(it.source) }
+                .filter { it.isNotBlank() && !it.equals("other", ignoreCase = true) }
+                .distinct()
+            if (sources.isEmpty()) {
+                return UpiSourcesData("0 Apps", "None")
+            }
+            val countLabel = if (sources.size == 1) "1 App" else "${sources.size} Apps"
+            val namesLabel = sources.joinToString(" · ")
+            return UpiSourcesData(countLabel, namesLabel)
+        }
+
+        fun computeWeeklyChartData(list: List<Transaction>, nowMs: Long = System.currentTimeMillis()): CashFlowChartData {
+            val confirmed = computeConfirmedOutgoing(list)
+            val labels = listOf("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+            val mondayMs = getMondayOfWeek(nowMs)
+            val values = mutableListOf<Float>()
+            for (i in 0..6) {
+                val dayStart = mondayMs + i * 86400000L
+                val dayEnd = dayStart + 86400000L - 1L
+                val daySum = confirmed.filter { it.timestamp in dayStart..dayEnd }.sumOf { parseAmount(it.amount) }.toFloat()
+                values.add(daySum)
+            }
+            val totalSum = values.sum().toDouble()
+            val totalFormatted = "₹" + if (totalSum == 0.0) "0" else String.format(java.util.Locale.US, "%,.2f", totalSum)
+            return CashFlowChartData(labels, values, totalFormatted)
+        }
+
+        fun computeMonthlyChartData(list: List<Transaction>, nowMs: Long = System.currentTimeMillis()): CashFlowChartData {
+            val confirmed = computeConfirmedOutgoing(list)
+            val labels = listOf("Wk 1", "Wk 2", "Wk 3", "Wk 4", "Wk 5")
+            val (monthStart, monthEnd) = getCurrentMonthBounds(nowMs)
+            val monthTxns = confirmed.filter { it.timestamp in monthStart..monthEnd }
+            val cal = java.util.Calendar.getInstance()
+            val sums = FloatArray(5) { 0f }
+            monthTxns.forEach { t ->
+                cal.timeInMillis = t.timestamp
+                val day = cal.get(java.util.Calendar.DAY_OF_MONTH)
+                val bucket = when {
+                    day <= 7 -> 0
+                    day <= 14 -> 1
+                    day <= 21 -> 2
+                    day <= 28 -> 3
+                    else -> 4
+                }
+                sums[bucket] += parseAmount(t.amount).toFloat()
+            }
+            val values = sums.toList()
+            val totalSum = values.sum().toDouble()
+            val totalFormatted = "₹" + if (totalSum == 0.0) "0" else String.format(java.util.Locale.US, "%,.2f", totalSum)
+            return CashFlowChartData(labels, values, totalFormatted)
+        }
+    }
+
+    val totalSpent: StateFlow<String> = transactions.map { list ->
+        computeTotalSpent(list)
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), "₹0")
+
+    val vsLastMonth: StateFlow<Pair<String, Color>> = transactions.map { list ->
+        computeVsLastMonth(list)
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), Pair("0% vs last month", ColorText2))
+
+    val topCategory: StateFlow<TopCategoryData> = transactions.map { list ->
+        computeTopCategory(list)
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), TopCategoryData("None", "₹0 · 0 txns"))
+
+    val upiSources: StateFlow<UpiSourcesData> = transactions.map { list ->
+        computeUpiSources(list)
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), UpiSourcesData("0 Apps", "None"))
+
+    val weeklyChartData: StateFlow<CashFlowChartData> = transactions.map { list ->
+        computeWeeklyChartData(list)
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), CashFlowChartData(listOf("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"), listOf(0f, 0f, 0f, 0f, 0f, 0f, 0f), "₹0"))
+
+    val monthlyChartData: StateFlow<CashFlowChartData> = transactions.map { list ->
+        computeMonthlyChartData(list)
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), CashFlowChartData(listOf("Wk 1", "Wk 2", "Wk 3", "Wk 4", "Wk 5"), listOf(0f, 0f, 0f, 0f, 0f), "₹0"))
 
     val needsReviewAmount: StateFlow<String> = transactions.map { list ->
-        val sum = list.filter { it.status == "review" }.sumOf {
-            it.amount.replace("−₹", "").replace(",", "").trim().toDoubleOrNull() ?: 0.0
-        }
-        "₹" + String.format(java.util.Locale.US, "%,.2f", sum)
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), "₹0.00")
+        val sum = list.filter { !it.status.equals("confirmed", ignoreCase = true) && !it.status.equals("ignored", ignoreCase = true) && it.status.equals("review", ignoreCase = true) }.sumOf { parseAmount(it.amount) }
+        "₹" + if (sum == 0.0) "0" else String.format(java.util.Locale.US, "%,.2f", sum)
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), "₹0")
 
     val pendingReviewCount: StateFlow<Int> = transactions.map { list ->
-        list.count { it.status == "review" }
+        list.count { it.status.equals("review", ignoreCase = true) }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
 }
 
@@ -626,6 +850,11 @@ fun DashboardScreen(
 
     val transactions by viewModel.transactions.collectAsState()
     val totalSpent by viewModel.totalSpent.collectAsState()
+    val vsLastMonth by viewModel.vsLastMonth.collectAsState()
+    val topCategory by viewModel.topCategory.collectAsState()
+    val upiSources by viewModel.upiSources.collectAsState()
+    val weeklyChartData by viewModel.weeklyChartData.collectAsState()
+    val monthlyChartData by viewModel.monthlyChartData.collectAsState()
     val needsReviewAmount by viewModel.needsReviewAmount.collectAsState()
     val pendingReviewCount by viewModel.pendingReviewCount.collectAsState()
 
@@ -659,9 +888,10 @@ fun DashboardScreen(
                     border = BorderStroke(1.dp, ColorOrange.copy(alpha = 0.4f)),
                     colors = ButtonDefaults.outlinedButtonColors(contentColor = ColorOrange),
                     shape = RoundedCornerShape(8.dp),
+                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 8.dp),
                     modifier = Modifier.weight(1f)
                 ) {
-                    Icon(Icons.Default.AccountBalance, contentDescription = null, tint = ColorOrange)
+                    Icon(Icons.Default.AccountBalance, contentDescription = null, tint = ColorOrange, modifier = Modifier.size(16.dp))
                     Spacer(modifier = Modifier.width(4.dp))
                     Text("Budget", maxLines = 1, fontSize = 12.sp)
                 }
@@ -671,9 +901,10 @@ fun DashboardScreen(
                     border = BorderStroke(1.dp, ColorBg3),
                     colors = ButtonDefaults.outlinedButtonColors(contentColor = ColorText2),
                     shape = RoundedCornerShape(8.dp),
+                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 8.dp),
                     modifier = Modifier.weight(1f)
                 ) {
-                    Icon(Icons.Default.Download, contentDescription = null, tint = ColorText2)
+                    Icon(Icons.Default.Download, contentDescription = null, tint = ColorText2, modifier = Modifier.size(16.dp))
                     Spacer(modifier = Modifier.width(4.dp))
                     Text("Export", maxLines = 1, fontSize = 12.sp)
                 }
@@ -682,9 +913,10 @@ fun DashboardScreen(
                     onClick = { onNavigate("review") },
                     colors = ButtonDefaults.buttonColors(containerColor = ColorOrange),
                     shape = RoundedCornerShape(8.dp),
+                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 8.dp),
                     modifier = Modifier.weight(1.2f)
                 ) {
-                    Icon(Icons.Default.RateReview, contentDescription = null, tint = Color.White)
+                    Icon(Icons.Default.RateReview, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
                     Spacer(modifier = Modifier.width(4.dp))
                     Text("Review", maxLines = 1, color = Color.White, fontSize = 12.sp)
                 }
@@ -693,14 +925,25 @@ fun DashboardScreen(
             // METRICS GRID
             MetricsRow(
                 totalSpent = totalSpent,
+                vsLastMonthText = vsLastMonth.first,
+                vsLastMonthColor = vsLastMonth.second,
                 needsReviewAmount = needsReviewAmount,
-                reviewCount = pendingReviewCount
+                reviewCount = pendingReviewCount,
+                topCatLabel = topCategory.label,
+                topCatSubText = topCategory.subText,
+                upiCountLabel = upiSources.label,
+                upiNamesLabel = upiSources.subText
             )
 
             Spacer(modifier = Modifier.height(16.dp))
 
             // CHART CARD
-            ChartCard(chartType = chartType, onTypeChange = { chartType = it })
+            val currentChartData = if (chartType == "weekly") weeklyChartData else monthlyChartData
+            ChartCard(
+                chartData = currentChartData,
+                chartType = chartType,
+                onTypeChange = { chartType = it }
+            )
 
             Spacer(modifier = Modifier.height(16.dp))
 
@@ -731,12 +974,12 @@ fun DashboardScreen(
             )
 
             val filteredTransactions = transactions.filter {
-                it.status != "ignored" && (
+                !it.status.equals("ignored", ignoreCase = true) && !it.status.equals("duplicate", ignoreCase = true) && (
                     it.merchant.contains(searchQuery, ignoreCase = true) ||
                     it.category.contains(searchQuery, ignoreCase = true) ||
                     it.source.contains(searchQuery, ignoreCase = true)
                 )
-            }
+            }.sortedByDescending { it.timestamp }
 
             TransactionTable(filteredTransactions)
 
@@ -789,16 +1032,22 @@ fun DashboardTopBar() {
 @Composable
 fun MetricsRow(
     totalSpent: String,
+    vsLastMonthText: String,
+    vsLastMonthColor: Color,
     needsReviewAmount: String,
-    reviewCount: Int
+    reviewCount: Int,
+    topCatLabel: String,
+    topCatSubText: String,
+    upiCountLabel: String,
+    upiNamesLabel: String
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             MetricCard(
                 label = "Total Spent (Month)",
                 value = totalSpent,
-                subText = "+12% vs last month",
-                subTextColor = ColorGreen,
+                subText = vsLastMonthText,
+                subTextColor = vsLastMonthColor,
                 modifier = Modifier.weight(1f)
             )
             MetricCard(
@@ -812,15 +1061,15 @@ fun MetricsRow(
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             MetricCard(
                 label = "Top Category",
-                value = "Food 🍔",
-                subText = "₹8,240 · 34 txns",
+                value = topCatLabel,
+                subText = topCatSubText,
                 subTextColor = ColorText2,
                 modifier = Modifier.weight(1f)
             )
             MetricCard(
                 label = "UPI Sources",
-                value = "4 Apps",
-                subText = "GPay · PhonePe · Paytm",
+                value = upiCountLabel,
+                subText = upiNamesLabel,
                 subTextColor = ColorText2,
                 modifier = Modifier.weight(1f)
             )
@@ -855,19 +1104,12 @@ fun MetricCard(
 // ── CUSTOM CANVAS CHART CARD ──────────────────────────────────────────────
 @Composable
 fun ChartCard(
+    chartData: CashFlowChartData,
     chartType: String,
     onTypeChange: (String) -> Unit
 ) {
-    val labels = if (chartType == "weekly") {
-        listOf("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
-    } else {
-        listOf("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul")
-    }
-    val values = if (chartType == "weekly") {
-        listOf(1200f, 3400f, 890f, 5200f, 2100f, 8400f, 4100f)
-    } else {
-        listOf(18200f, 22400f, 16800f, 28900f, 24100f, 31200f, 24831f)
-    }
+    val labels = chartData.labels
+    val values = chartData.values
 
     Card(
         colors = CardDefaults.cardColors(containerColor = ColorBg2),
@@ -883,7 +1125,7 @@ fun ChartCard(
             ) {
                 Column {
                     Text("CASH FLOW", fontSize = 10.sp, color = ColorText3, fontWeight = FontWeight.Bold)
-                    Text("₹24,831.50", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = ColorText1)
+                    Text(chartData.totalFormatted, fontSize = 22.sp, fontWeight = FontWeight.Bold, color = ColorText1)
                 }
 
                 Row(
@@ -944,9 +1186,10 @@ fun ChartCard(
                     )
                 }
 
-                val max = values.maxOrNull() ?: 1f
-                val maxIdx = values.indexOf(max)
-                val stepX = innerW / values.size
+                val maxVal = values.maxOrNull() ?: 0f
+                val max = if (maxVal > 0f) maxVal else 1f
+                val maxIdx = if (maxVal > 0f) values.indexOf(maxVal) else -1
+                val stepX = if (values.isNotEmpty()) innerW / values.size else innerW
                 val barW = stepX * 0.5f
 
                 values.forEachIndexed { i, value ->

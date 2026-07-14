@@ -40,7 +40,8 @@ data class TransactionEntity(
             date = dateStr,
             status = status,
             notificationExcerpt = safeNotificationExcerpt,
-            detectionReason = detectionReason
+            detectionReason = detectionReason,
+            timestamp = timestamp
         )
     }
 }
