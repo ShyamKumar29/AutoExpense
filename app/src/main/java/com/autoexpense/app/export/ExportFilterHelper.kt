@@ -166,7 +166,8 @@ object ExportFilterHelper {
                 "food", "dining", "transport", "groceries", "shopping",
                 "healthcare", "entertainment", "rent", "bills", "personal", "transfer", "travel"
             )
-            val isKnown = knownKeywords.any { cleanTx.contains(it, ignoreCase = true) }
+            val customNames = com.autoexpense.app.data.CustomCategoryRepository.customCategories.value.map { cleanCategoryString(it.name) }
+            val isKnown = knownKeywords.any { cleanTx.contains(it, ignoreCase = true) } || customNames.any { cleanTx.equals(it, ignoreCase = true) }
             return !isKnown
         }
 

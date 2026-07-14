@@ -8,34 +8,46 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.*
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
-import androidx.compose.material.icons.outlined.Notifications
-import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -155,9 +167,10 @@ object TransactionRepository {
         return AutoExpenseDatabase.getDatabase(context).transactionDao().getConfirmedTransactions()
     }
 
-    fun confirmTransaction(id: String, category: String) {
+    fun confirmTransaction(id: String, category: String, onComplete: (() -> Unit)? = null) {
         coroutineScope.launch {
             dao.confirmTransaction(id, category)
+            onComplete?.invoke()
         }
     }
 
@@ -182,14 +195,15 @@ object TransactionRepository {
         // Kept for fallback, but NotificationProcessor will use addTransactionEntity
     }
 
-    fun approveAll(suggestions: Map<String, String>) {
+    fun approveAll(suggestions: Map<String, String>, onComplete: (() -> Unit)? = null) {
         coroutineScope.launch {
             _transactions.value.forEach {
                 if (it.status == "review") {
-                    val cat = suggestions[it.id] ?: "💸 Personal Transfer"
+                    val cat = suggestions[it.id] ?: "Personal Transfer"
                     dao.confirmTransaction(it.id, cat)
                 }
             }
+            onComplete?.invoke()
         }
     }
 }
@@ -198,7 +212,8 @@ object TransactionRepository {
 data class CashFlowChartData(
     val labels: List<String>,
     val values: List<Float>,
-    val totalFormatted: String
+    val totalFormatted: String,
+    val counts: List<Int> = emptyList()
 )
 
 data class TopCategoryData(
@@ -339,10 +354,10 @@ class DashboardViewModel : ViewModel() {
             if (monthTxns.isEmpty()) {
                 return TopCategoryData("None", "₹0 · 0 txns")
             }
-            val grouped = monthTxns.groupBy { it.category }
+            val grouped = monthTxns.groupBy { com.autoexpense.app.ui.cleanCategoryName(it.category) }
             val maxEntry = grouped.maxByOrNull { entry -> entry.value.sumOf { parseAmount(it.amount) } }
             if (maxEntry != null) {
-                val catName = maxEntry.key.ifBlank { "Other" }
+                val catName = com.autoexpense.app.ui.cleanCategoryName(maxEntry.key).ifBlank { "Other" }
                 val catSum = maxEntry.value.sumOf { parseAmount(it.amount) }
                 val count = maxEntry.value.size
                 val sumStr = "₹" + if (catSum == 0.0) "0" else String.format(java.util.Locale.US, "%,.0f", catSum)
@@ -369,15 +384,18 @@ class DashboardViewModel : ViewModel() {
             val labels = listOf("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
             val mondayMs = getMondayOfWeek(nowMs)
             val values = mutableListOf<Float>()
+            val counts = mutableListOf<Int>()
             for (i in 0..6) {
                 val dayStart = mondayMs + i * 86400000L
                 val dayEnd = dayStart + 86400000L - 1L
-                val daySum = confirmed.filter { it.timestamp in dayStart..dayEnd }.sumOf { parseAmount(it.amount) }.toFloat()
+                val dayTxns = confirmed.filter { it.timestamp in dayStart..dayEnd }
+                val daySum = dayTxns.sumOf { parseAmount(it.amount) }.toFloat()
                 values.add(daySum)
+                counts.add(dayTxns.size)
             }
             val totalSum = values.sum().toDouble()
             val totalFormatted = "₹" + if (totalSum == 0.0) "0" else String.format(java.util.Locale.US, "%,.2f", totalSum)
-            return CashFlowChartData(labels, values, totalFormatted)
+            return CashFlowChartData(labels, values, totalFormatted, counts)
         }
 
         fun computeMonthlyChartData(list: List<Transaction>, nowMs: Long = System.currentTimeMillis()): CashFlowChartData {
@@ -387,6 +405,7 @@ class DashboardViewModel : ViewModel() {
             val monthTxns = confirmed.filter { it.timestamp in monthStart..monthEnd }
             val cal = java.util.Calendar.getInstance()
             val sums = FloatArray(5) { 0f }
+            val counts = IntArray(5) { 0 }
             monthTxns.forEach { t ->
                 cal.timeInMillis = t.timestamp
                 val day = cal.get(java.util.Calendar.DAY_OF_MONTH)
@@ -398,11 +417,42 @@ class DashboardViewModel : ViewModel() {
                     else -> 4
                 }
                 sums[bucket] += parseAmount(t.amount).toFloat()
+                counts[bucket] += 1
             }
             val values = sums.toList()
             val totalSum = values.sum().toDouble()
             val totalFormatted = "₹" + if (totalSum == 0.0) "0" else String.format(java.util.Locale.US, "%,.2f", totalSum)
-            return CashFlowChartData(labels, values, totalFormatted)
+            return CashFlowChartData(labels, values, totalFormatted, counts.toList())
+        }
+
+        fun formatIndianCurrencyValue(amount: Double): String {
+            val localeIN = java.util.Locale("en", "IN")
+            val formatter = java.text.NumberFormat.getCurrencyInstance(localeIN)
+            var s = formatter.format(amount)
+            s = s.replace("Rs.", "₹").replace("INR", "₹").replace(" ", "").trim()
+            if (!s.startsWith("₹")) {
+                val parts = String.format(java.util.Locale.US, "%.2f", amount).split(".")
+                val intPart = parts[0]
+                val decPart = parts[1]
+                val n = intPart.length
+                val formattedInt = if (n <= 3) {
+                    intPart
+                } else {
+                    val lastThree = intPart.substring(n - 3)
+                    var rest = intPart.substring(0, n - 3)
+                    val res = StringBuilder()
+                    while (rest.length > 2) {
+                        res.insert(0, "," + rest.substring(rest.length - 2))
+                        rest = rest.substring(0, rest.length - 2)
+                    }
+                    if (rest.isNotEmpty()) {
+                        res.insert(0, rest)
+                    }
+                    res.append(",").append(lastThree).toString()
+                }
+                return "₹$formattedInt.$decPart"
+            }
+            return s
         }
     }
 
@@ -455,21 +505,21 @@ class ReviewViewModel : ViewModel() {
         list.count { it.status == "review" }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
 
-    fun confirmTransaction(id: String, category: String) {
-        TransactionRepository.confirmTransaction(id, category)
+    fun confirmTransaction(id: String, category: String, onComplete: (() -> Unit)? = null) {
+        TransactionRepository.confirmTransaction(id, category, onComplete)
     }
 
     fun ignoreTransaction(id: String) {
         TransactionRepository.ignoreTransaction(id)
     }
 
-    fun approveAll() {
+    fun approveAll(onComplete: (() -> Unit)? = null) {
         val suggestions = mapOf(
-            "TXN004" to "💸 Personal Transfer",
-            "TXN007" to "🛒 Groceries",
-            "TXN009" to "💸 Personal Transfer"
+            "TXN004" to "Personal Transfer",
+            "TXN007" to "Groceries",
+            "TXN009" to "Personal Transfer"
         )
-        TransactionRepository.approveAll(suggestions)
+        TransactionRepository.approveAll(suggestions, onComplete)
     }
 }
 
@@ -526,7 +576,12 @@ fun MainAppContainer(
     budgetViewModel: BudgetViewModel = viewModel(),
     exportViewModel: com.autoexpense.app.export.ExportViewModel = viewModel()
 ) {
-    var isUserLoggedIn by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    val userPrefs = remember { com.autoexpense.app.data.UserPreferencesRepository.getInstance(context) }
+    val isOnboardingCompleted by userPrefs.isOnboardingCompleted.collectAsState(initial = false)
+    val userName by userPrefs.userName.collectAsState(initial = "")
+    val scope = rememberCoroutineScope()
+
     var activeScreen by remember { mutableStateOf("dashboard") }
     // Session-only: once dismissed the card won't re-appear until next launch.
     var setupCardDismissed by remember { mutableStateOf(false) }
@@ -534,18 +589,23 @@ fun MainAppContainer(
     val reviewCount by reviewViewModel.pendingReviewCount.collectAsState()
     val notificationEnabled by profileViewModel.notificationAccessEnabled.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
-    val context = LocalContext.current
 
     // Refresh permission status after login and whenever the active screen changes
     // (covers the case where the user returns from Android Settings).
-    LaunchedEffect(activeScreen, isUserLoggedIn) {
-        if (isUserLoggedIn) profileViewModel.refreshPermissionStatus(context)
+    LaunchedEffect(activeScreen, isOnboardingCompleted) {
+        if (isOnboardingCompleted) profileViewModel.refreshPermissionStatus(context)
     }
 
-    val showNotificationSetupCard = isUserLoggedIn && !notificationEnabled && !setupCardDismissed
+    val showNotificationSetupCard = isOnboardingCompleted && !notificationEnabled && !setupCardDismissed
 
-    if (!isUserLoggedIn) {
-        LoginScreen(onLoginSuccess = { isUserLoggedIn = true })
+    if (!isOnboardingCompleted) {
+        com.autoexpense.app.ui.OnboardingScreen(
+            onGetStarted = { name ->
+                scope.launch {
+                    userPrefs.completeOnboarding(name)
+                }
+            }
+        )
     } else {
         Scaffold(
             bottomBar = {
@@ -563,29 +623,47 @@ fun MainAppContainer(
                     .fillMaxSize()
                     .padding(paddingValues)
             ) {
-                when (activeScreen) {
-                    "dashboard" -> DashboardScreen(
-                        viewModel = dashboardViewModel,
-                        onNavigate = { activeScreen = it },
-                        showNotificationSetupCard = showNotificationSetupCard,
-                        onDismissSetupCard = { setupCardDismissed = true }
-                    )
-                    "receipts" -> ReceiptsLedgerScreen(viewModel = receiptsViewModel)
-                    "review" -> NeedsReviewScreen(
-                        viewModel = reviewViewModel,
-                        budgetViewModel = budgetViewModel,
-                        snackbarHostState = snackbarHostState,
-                        onBackToDashboard = { activeScreen = "dashboard" }
-                    )
-                    "budget" -> BudgetScreen(viewModel = budgetViewModel)
-                    "profile" -> ProfileScreen(
-                        viewModel = profileViewModel,
-                        onNavigateBack = { activeScreen = "dashboard" }
-                    )
-                    "export" -> com.autoexpense.app.export.ExportScreen(
-                        viewModel = exportViewModel,
-                        onBackToDashboard = { activeScreen = "dashboard" }
-                    )
+                androidx.compose.animation.AnimatedContent(
+                    targetState = activeScreen,
+                    transitionSpec = {
+                        (androidx.compose.animation.fadeIn(animationSpec = androidx.compose.animation.core.tween(250)) +
+                            androidx.compose.animation.slideInVertically(
+                                animationSpec = androidx.compose.animation.core.tween(250),
+                                initialOffsetY = { it / 35 }
+                            )) togetherWith
+                            androidx.compose.animation.fadeOut(animationSpec = androidx.compose.animation.core.tween(200))
+                    },
+                    label = "screenTransition"
+                ) { targetScreen ->
+                    when (targetScreen) {
+                        "dashboard" -> DashboardScreen(
+                            viewModel = dashboardViewModel,
+                            onNavigate = { activeScreen = it },
+                            userName = userName,
+                            onProfileClick = { activeScreen = "profile" },
+                            showNotificationSetupCard = showNotificationSetupCard,
+                            onDismissSetupCard = { setupCardDismissed = true }
+                        )
+                        "receipts" -> ReceiptsLedgerScreen(
+                            viewModel = receiptsViewModel,
+                            onNavigateToExport = { activeScreen = "export" }
+                        )
+                        "review" -> NeedsReviewScreen(
+                            viewModel = reviewViewModel,
+                            budgetViewModel = budgetViewModel,
+                            snackbarHostState = snackbarHostState,
+                            onBackToDashboard = { activeScreen = "dashboard" }
+                        )
+                        "budget" -> BudgetScreen(viewModel = budgetViewModel)
+                        "profile" -> ProfileScreen(
+                            viewModel = profileViewModel,
+                            onNavigateBack = { activeScreen = "dashboard" }
+                        )
+                        "export" -> com.autoexpense.app.export.ExportScreen(
+                            viewModel = exportViewModel,
+                            onBackToDashboard = { activeScreen = "dashboard" }
+                        )
+                    }
                 }
             }
         }
@@ -683,158 +761,10 @@ fun AppBottomBar(
     }
 }
 
-// ── LOGIN SCREEN ──────────────────────────────────────────────────────────
+// ── DEPRECATED LOGIN SCREEN (Replaced by OnboardingScreen in Phase 2/3) ───
 @Composable
 fun LoginScreen(onLoginSuccess: () -> Unit) {
-    var email by remember { mutableStateOf("demo@autoexpense.in") }
-    var password by remember { mutableStateOf("password") }
-    var isSigningIn by remember { mutableStateOf(false) }
-    val scope = rememberCoroutineScope()
-
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(ColorBg0)
-            .padding(24.dp),
-        contentAlignment = Alignment.Center
-    ) {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center,
-            modifier = Modifier.widthIn(max = 400.dp)
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(60.dp)
-                    .background(ColorOrangeDim, RoundedCornerShape(14.dp))
-                    .border(1.dp, ColorOrange.copy(alpha = 0.3f), RoundedCornerShape(14.dp)),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Check,
-                    contentDescription = "Logo",
-                    tint = ColorOrange,
-                    modifier = Modifier.size(32.dp)
-                )
-            }
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            Text(
-                text = "AutoExpense",
-                color = ColorText1,
-                fontSize = 28.sp,
-                fontWeight = FontWeight.Bold,
-                fontFamily = FontFamily.SansSerif
-            )
-            Text(
-                text = "Your UPI spends, tracked automatically.",
-                color = ColorText2,
-                fontSize = 14.sp,
-                modifier = Modifier.padding(top = 4.dp)
-            )
-
-            Spacer(modifier = Modifier.height(32.dp))
-
-            Card(
-                colors = CardDefaults.cardColors(containerColor = ColorBg1),
-                shape = RoundedCornerShape(16.dp),
-                border = BorderStroke(1.dp, ColorBg3),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column(modifier = Modifier.padding(24.dp)) {
-                    Text(
-                        text = "Welcome back",
-                        fontSize = 18.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = ColorText1
-                    )
-                    Text(
-                        text = "Sign in to your expense dashboard",
-                        fontSize = 12.sp,
-                        color = ColorText2,
-                        modifier = Modifier.padding(bottom = 16.dp)
-                    )
-
-                    OutlinedTextField(
-                        value = email,
-                        onValueChange = { email = it },
-                        label = { Text("Email address") },
-                        placeholder = { Text("you@example.com") },
-                        singleLine = true,
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = ColorOrange,
-                            unfocusedBorderColor = ColorBg3,
-                            focusedLabelColor = ColorOrange,
-                            unfocusedLabelColor = ColorText2,
-                            focusedTextColor = ColorText1,
-                            unfocusedTextColor = ColorText1
-                        ),
-                        modifier = Modifier.fillMaxWidth()
-                    )
-
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    OutlinedTextField(
-                        value = password,
-                        onValueChange = { password = it },
-                        label = { Text("Password") },
-                        placeholder = { Text("••••••••") },
-                        visualTransformation = PasswordVisualTransformation(),
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-                        singleLine = true,
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = ColorOrange,
-                            unfocusedBorderColor = ColorBg3,
-                            focusedLabelColor = ColorOrange,
-                            unfocusedLabelColor = ColorText2,
-                            focusedTextColor = ColorText1,
-                            unfocusedTextColor = ColorText1
-                        ),
-                        modifier = Modifier.fillMaxWidth()
-                    )
-
-                    Spacer(modifier = Modifier.height(24.dp))
-
-                    Button(
-                        onClick = {
-                            isSigningIn = true
-                            scope.launch {
-                                delay(900)
-                                isSigningIn = false
-                                onLoginSuccess()
-                            }
-                        },
-                        colors = ButtonDefaults.buttonColors(containerColor = ColorOrange),
-                        shape = RoundedCornerShape(8.dp),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(48.dp),
-                        enabled = !isSigningIn
-                    ) {
-                        if (isSigningIn) {
-                            CircularProgressIndicator(
-                                color = Color.White,
-                                modifier = Modifier.size(24.dp),
-                                strokeWidth = 2.5.dp
-                            )
-                        } else {
-                            Text("Sign In", fontWeight = FontWeight.Bold, color = Color.White)
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(16.dp))
-
-                    TextButton(
-                        onClick = { onLoginSuccess() },
-                        modifier = Modifier.align(Alignment.CenterHorizontally)
-                    ) {
-                        Text("Or continue with Demo Mode", color = ColorOrange)
-                    }
-                }
-            }
-        }
-    }
+    LaunchedEffect(Unit) { onLoginSuccess() }
 }
 
 // ── DASHBOARD SCREEN ───────────────────────────────────────────────────────────
@@ -842,6 +772,8 @@ fun LoginScreen(onLoginSuccess: () -> Unit) {
 fun DashboardScreen(
     viewModel: DashboardViewModel,
     onNavigate: (String) -> Unit,
+    userName: String = "",
+    onProfileClick: () -> Unit = {},
     showNotificationSetupCard: Boolean = false,
     onDismissSetupCard: () -> Unit = {}
 ) {
@@ -864,7 +796,7 @@ fun DashboardScreen(
             .background(ColorBg0)
             .verticalScroll(rememberScrollState())
     ) {
-        DashboardTopBar()
+        DashboardTopBar(userName = userName, onProfileClick = onProfileClick)
 
         // Phase 2: dismissible notification-access setup card.
         if (showNotificationSetupCard) {
@@ -876,51 +808,7 @@ fun DashboardScreen(
         }
 
         Column(modifier = Modifier.padding(horizontal = 16.dp)) {
-            // ACTION ROW
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 12.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                OutlinedButton(
-                    onClick = { onNavigate("budget") },
-                    border = BorderStroke(1.dp, ColorOrange.copy(alpha = 0.4f)),
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = ColorOrange),
-                    shape = RoundedCornerShape(8.dp),
-                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 8.dp),
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Icon(Icons.Default.AccountBalance, contentDescription = null, tint = ColorOrange, modifier = Modifier.size(16.dp))
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text("Budget", maxLines = 1, fontSize = 12.sp)
-                }
-
-                OutlinedButton(
-                    onClick = { onNavigate("export") },
-                    border = BorderStroke(1.dp, ColorBg3),
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = ColorText2),
-                    shape = RoundedCornerShape(8.dp),
-                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 8.dp),
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Icon(Icons.Default.Download, contentDescription = null, tint = ColorText2, modifier = Modifier.size(16.dp))
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text("Export", maxLines = 1, fontSize = 12.sp)
-                }
-
-                Button(
-                    onClick = { onNavigate("review") },
-                    colors = ButtonDefaults.buttonColors(containerColor = ColorOrange),
-                    shape = RoundedCornerShape(8.dp),
-                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 8.dp),
-                    modifier = Modifier.weight(1.2f)
-                ) {
-                    Icon(Icons.Default.RateReview, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text("Review", maxLines = 1, color = Color.White, fontSize = 12.sp)
-                }
-            }
+            Spacer(modifier = Modifier.height(12.dp))
 
             // METRICS GRID
             MetricsRow(
@@ -947,6 +835,14 @@ fun DashboardScreen(
 
             Spacer(modifier = Modifier.height(16.dp))
 
+            SpendingByCategoryCard(
+                transactions = transactions,
+                periodType = chartType,
+                onPeriodChange = { chartType = it }
+            )
+
+            Spacer(modifier = Modifier.height(16.dp))
+
             // LIVE SEARCH & TRANSACTIONS TABLE
             Text(
                 text = "Recent Transactions",
@@ -968,6 +864,7 @@ fun DashboardScreen(
                     focusedTextColor = ColorText1,
                     unfocusedTextColor = ColorText1
                 ),
+                shape = RoundedCornerShape(12.dp),
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(bottom = 12.dp)
@@ -989,26 +886,40 @@ fun DashboardScreen(
 }
 
 @Composable
-fun DashboardTopBar() {
+fun DashboardTopBar(
+    userName: String = "",
+    onProfileClick: () -> Unit = {}
+) {
+    val currentMonth = remember {
+        java.text.SimpleDateFormat("MMMM", java.util.Locale.US).format(java.util.Date())
+    }
+    val greeting = remember(userName) {
+        val hour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
+        val timeGreeting = when {
+            hour < 12 -> "Good morning"
+            hour < 17 -> "Good afternoon"
+            else -> "Good evening"
+        }
+        val namePart = if (userName.isNotBlank() && userName != "User") ", $userName" else ""
+        "$timeGreeting$namePart"
+    }
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .background(ColorBg1)
-            .padding(horizontal = 16.dp, vertical = 12.dp),
+            .padding(horizontal = 20.dp, vertical = 16.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(
-                modifier = Modifier
-                    .size(36.dp)
-                    .background(ColorOrangeDim, RoundedCornerShape(8.dp)),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(Icons.Default.Check, contentDescription = null, tint = ColorOrange, modifier = Modifier.size(20.dp))
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+            com.autoexpense.app.ui.AutoExpenseLogo(size = 36.dp, tint = ColorOrange)
+            Spacer(modifier = Modifier.width(12.dp))
+            Column {
+                Text(greeting, fontWeight = FontWeight.Bold, color = ColorText1, fontSize = 18.sp)
+                Spacer(modifier = Modifier.height(2.dp))
+                Text("Here’s your spending overview for $currentMonth.", color = ColorText2, fontSize = 12.sp)
             }
-            Spacer(modifier = Modifier.width(8.dp))
-            Text("AutoExpense", fontWeight = FontWeight.Bold, color = ColorText1, fontSize = 18.sp)
         }
 
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1018,12 +929,18 @@ fun DashboardTopBar() {
             Spacer(modifier = Modifier.width(4.dp))
             Box(
                 modifier = Modifier
-                    .size(34.dp)
+                    .size(36.dp)
                     .clip(CircleShape)
-                    .background(ColorOrange),
+                    .background(ColorOrange)
+                    .clickable { onProfileClick() },
                 contentAlignment = Alignment.Center
             ) {
-                Text("AE", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                val initials = if (userName.isNotBlank() && userName != "User") {
+                    userName.trim().take(2).uppercase()
+                } else {
+                    "AE"
+                }
+                Text(initials, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp)
             }
         }
     }
@@ -1059,12 +976,17 @@ fun MetricsRow(
             )
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            val cleanTopCat = com.autoexpense.app.ui.cleanCategoryName(topCatLabel)
+            val topCatIcon = if (cleanTopCat != "None" && cleanTopCat != "Other" && cleanTopCat.isNotBlank()) {
+                com.autoexpense.app.ui.getCategoryIcon(cleanTopCat)
+            } else null
             MetricCard(
                 label = "Top Category",
-                value = topCatLabel,
+                value = cleanTopCat,
                 subText = topCatSubText,
                 subTextColor = ColorText2,
-                modifier = Modifier.weight(1f)
+                modifier = Modifier.weight(1f),
+                icon = topCatIcon
             )
             MetricCard(
                 label = "UPI Sources",
@@ -1078,23 +1000,89 @@ fun MetricsRow(
 }
 
 @Composable
+fun AnimatedAmountText(
+    targetFormatted: String,
+    fontSize: TextUnit,
+    fontWeight: FontWeight,
+    color: Color
+) {
+    val targetAmount = remember(targetFormatted) { DashboardViewModel.parseAmount(targetFormatted) }
+    val animatable = remember { androidx.compose.animation.core.Animatable(0f) }
+    var lastAnimateTarget by remember { mutableStateOf<Double?>(null) }
+
+    LaunchedEffect(targetAmount) {
+        if (lastAnimateTarget == null || kotlin.math.abs(targetAmount - (lastAnimateTarget ?: 0.0)) > 0.01) {
+            lastAnimateTarget = targetAmount
+            if (targetAmount == 0.0) {
+                animatable.snapTo(0f)
+            } else {
+                animatable.snapTo(0f)
+                animatable.animateTo(
+                    targetValue = targetAmount.toFloat(),
+                    animationSpec = androidx.compose.animation.core.tween(
+                        durationMillis = 850,
+                        easing = androidx.compose.animation.core.FastOutSlowInEasing
+                    )
+                )
+            }
+        }
+    }
+
+    val currentVal = animatable.value.toDouble()
+    val isExactTarget = lastAnimateTarget == targetAmount && kotlin.math.abs(currentVal - targetAmount) < 0.01
+    val displayStr = if (isExactTarget) {
+        targetFormatted
+    } else {
+        DashboardViewModel.formatIndianCurrencyValue(currentVal)
+    }
+
+    Text(
+        text = displayStr,
+        fontSize = fontSize,
+        fontWeight = fontWeight,
+        color = color
+    )
+}
+
+@Composable
 fun MetricCard(
     label: String,
     value: String,
     subText: String,
     subTextColor: Color,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    icon: ImageVector? = null
 ) {
     Card(
         colors = CardDefaults.cardColors(containerColor = ColorBg2),
-        shape = RoundedCornerShape(12.dp),
+        shape = RoundedCornerShape(22.dp),
         border = BorderStroke(1.dp, ColorBg3),
         modifier = modifier
     ) {
-        Column(modifier = Modifier.padding(12.dp)) {
+        Column(modifier = Modifier.padding(16.dp)) {
             Text(label.uppercase(), fontSize = 10.sp, color = ColorText3, fontWeight = FontWeight.Bold)
             Spacer(modifier = Modifier.height(4.dp))
-            Text(value, fontSize = 18.sp, fontWeight = FontWeight.Bold, color = ColorText1)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (icon != null) {
+                    Icon(
+                        imageVector = icon,
+                        contentDescription = null,
+                        tint = ColorText1,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                }
+                if (label.equals("Total Spent (Month)", ignoreCase = true)) {
+                    AnimatedAmountText(
+                        targetFormatted = value,
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = ColorText1
+                    )
+                } else {
+                    Text(value, fontSize = 18.sp, fontWeight = FontWeight.Bold, color = ColorText1)
+                }
+            }
             Spacer(modifier = Modifier.height(4.dp))
             Text(subText, fontSize = 11.sp, color = subTextColor)
         }
@@ -1110,14 +1098,41 @@ fun ChartCard(
 ) {
     val labels = chartData.labels
     val values = chartData.values
+    var selectedBarIdx by remember { mutableStateOf<Int?>(null) }
+
+    val barAnimatables = remember(chartType, values) {
+        values.map { androidx.compose.animation.core.Animatable(0f) }
+    }
+
+    LaunchedEffect(chartType, values) {
+        selectedBarIdx = null
+        barAnimatables.forEachIndexed { i, anim ->
+            launch {
+                kotlinx.coroutines.delay(i * 60L)
+                anim.animateTo(
+                    targetValue = 1f,
+                    animationSpec = androidx.compose.animation.core.tween(
+                        durationMillis = 750,
+                        easing = androidx.compose.animation.core.FastOutSlowInEasing
+                    )
+                )
+            }
+        }
+    }
 
     Card(
         colors = CardDefaults.cardColors(containerColor = ColorBg2),
-        shape = RoundedCornerShape(16.dp),
+        shape = RoundedCornerShape(22.dp),
         border = BorderStroke(1.dp, ColorBg3),
         modifier = Modifier.fillMaxWidth()
     ) {
-        Column(modifier = Modifier.padding(16.dp)) {
+        Column(
+            modifier = Modifier
+                .padding(18.dp)
+                .pointerInput(Unit) {
+                    detectTapGestures { selectedBarIdx = null }
+                }
+        ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -1125,7 +1140,12 @@ fun ChartCard(
             ) {
                 Column {
                     Text("CASH FLOW", fontSize = 10.sp, color = ColorText3, fontWeight = FontWeight.Bold)
-                    Text(chartData.totalFormatted, fontSize = 22.sp, fontWeight = FontWeight.Bold, color = ColorText1)
+                    AnimatedAmountText(
+                        targetFormatted = chartData.totalFormatted,
+                        fontSize = 22.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = ColorText1
+                    )
                 }
 
                 Row(
@@ -1139,7 +1159,10 @@ fun ChartCard(
                         modifier = Modifier
                             .clip(RoundedCornerShape(4.dp))
                             .background(weeklyBg)
-                            .clickable { onTypeChange("weekly") }
+                            .clickable {
+                                selectedBarIdx = null
+                                onTypeChange("weekly")
+                            }
                             .padding(horizontal = 8.dp, vertical = 4.dp)
                     ) {
                         Text("Weekly", fontSize = 11.sp, color = weeklyText, fontWeight = FontWeight.Bold)
@@ -1151,10 +1174,71 @@ fun ChartCard(
                         modifier = Modifier
                             .clip(RoundedCornerShape(4.dp))
                             .background(monthlyBg)
-                            .clickable { onTypeChange("monthly") }
+                            .clickable {
+                                selectedBarIdx = null
+                                onTypeChange("monthly")
+                            }
                             .padding(horizontal = 8.dp, vertical = 4.dp)
                     ) {
                         Text("Monthly", fontSize = 11.sp, color = monthlyText, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+
+            AnimatedVisibility(
+                visible = selectedBarIdx != null,
+                enter = fadeIn(animationSpec = tween(180)) + scaleIn(initialScale = 0.95f, animationSpec = tween(180)),
+                exit = fadeOut(animationSpec = tween(150)) + scaleOut(targetScale = 0.95f, animationSpec = tween(150))
+            ) {
+                val idx = selectedBarIdx
+                if (idx != null && idx in labels.indices) {
+                    val title = if (chartType == "weekly") {
+                        when (labels[idx]) {
+                            "Mon" -> "Monday"
+                            "Tue" -> "Tuesday"
+                            "Wed" -> "Wednesday"
+                            "Thu" -> "Thursday"
+                            "Fri" -> "Friday"
+                            "Sat" -> "Saturday"
+                            "Sun" -> "Sunday"
+                            else -> labels[idx]
+                        }
+                    } else {
+                        when (labels[idx]) {
+                            "Wk 1" -> "Week 1 (1st–7th)"
+                            "Wk 2" -> "Week 2 (8th–14th)"
+                            "Wk 3" -> "Week 3 (15th–21st)"
+                            "Wk 4" -> "Week 4 (22nd–28th)"
+                            "Wk 5" -> "Week 5 (29th+)"
+                            else -> labels[idx]
+                        }
+                    }
+                    val barSum = values.getOrNull(idx)?.toDouble() ?: 0.0
+                    val count = chartData.counts.getOrNull(idx) ?: 0
+                    val spentStr = DashboardViewModel.formatIndianCurrencyValue(barSum) + " spent"
+                    val countStr = "$count " + if (count == 1) "transaction" else "transactions"
+
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = ColorBg1),
+                        shape = RoundedCornerShape(12.dp),
+                        border = BorderStroke(1.dp, ColorOrange.copy(alpha = 0.6f)),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 12.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 14.dp, vertical = 10.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column {
+                                Text(title, fontSize = 13.sp, fontWeight = FontWeight.Bold, color = ColorOrange)
+                                Text(spentStr, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = ColorText1)
+                            }
+                            Text(countStr, fontSize = 12.sp, color = ColorText2)
+                        }
                     }
                 }
             }
@@ -1165,6 +1249,21 @@ fun ChartCard(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(160.dp)
+                    .pointerInput(chartType, chartData, values) {
+                        detectTapGestures { tapOffset ->
+                            val W = size.width
+                            val padL = 30.dp.toPx()
+                            val padR = 10.dp.toPx()
+                            val innerW = W - padL - padR
+                            val stepX = if (values.isNotEmpty()) innerW / values.size else innerW
+                            if (tapOffset.x in padL..(W - padR) && stepX > 0) {
+                                val clickedIdx = ((tapOffset.x - padL) / stepX).toInt().coerceIn(0, values.size - 1)
+                                selectedBarIdx = if (selectedBarIdx == clickedIdx) null else clickedIdx
+                            } else {
+                                selectedBarIdx = null
+                            }
+                        }
+                    }
             ) {
                 val W = size.width
                 val H = size.height
@@ -1193,12 +1292,13 @@ fun ChartCard(
                 val barW = stepX * 0.5f
 
                 values.forEachIndexed { i, value ->
+                    val progress = barAnimatables.getOrNull(i)?.value ?: 1f
                     val x = padL + (i * stepX) + (stepX - barW) / 2
-                    val barH = (value / max) * innerH
+                    val barH = ((value / max) * innerH) * progress
                     val y = padT + innerH - barH
-                    val isMax = i == maxIdx
+                    val isHighlighted = if (selectedBarIdx != null) i == selectedBarIdx else i == maxIdx
 
-                    val brush = if (isMax) {
+                    val brush = if (isHighlighted) {
                         Brush.verticalGradient(
                             colors = listOf(ColorOrange, ColorOrange.copy(alpha = 0.3f)),
                             startY = y,
@@ -1219,9 +1319,9 @@ fun ChartCard(
                         cornerRadius = CornerRadius(4.dp.toPx(), 4.dp.toPx())
                     )
 
-                    if (isMax) {
+                    if (isHighlighted) {
                         drawRoundRect(
-                            color = ColorOrange.copy(alpha = 0.15f),
+                            color = ColorOrange.copy(alpha = 0.25f),
                             topLeft = Offset(x - 2.dp.toPx(), y - 2.dp.toPx()),
                             size = Size(barW + 4.dp.toPx(), barH + 4.dp.toPx()),
                             cornerRadius = CornerRadius(6.dp.toPx(), 6.dp.toPx()),
@@ -1254,12 +1354,226 @@ fun ChartCard(
     }
 }
 
+// ── SPENDING BY CATEGORY CARD ─────────────────────────────────────────────
+data class CategorySpendingItem(
+    val categoryName: String,
+    val amount: Double,
+    val percentage: Float,
+    val color: Color
+)
+
+@Composable
+fun SpendingByCategoryCard(
+    transactions: List<Transaction>,
+    periodType: String,
+    onPeriodChange: (String) -> Unit
+) {
+    val confirmed = remember(transactions) { DashboardViewModel.computeConfirmedOutgoing(transactions) }
+    val bounds = remember(periodType) {
+        if (periodType == "weekly") {
+            val mon = DashboardViewModel.getMondayOfWeek()
+            Pair(mon, mon + 7L * 86400000L - 1L)
+        } else {
+            DashboardViewModel.getCurrentMonthBounds()
+        }
+    }
+    val periodTxns = remember(confirmed, bounds) {
+        confirmed.filter { it.timestamp in bounds.first..bounds.second }
+    }
+    val (items, totalAmount) = remember(periodTxns) {
+        if (periodTxns.isEmpty()) {
+            Pair(emptyList<CategorySpendingItem>(), 0.0)
+        } else {
+            val total = periodTxns.sumOf { DashboardViewModel.parseAmount(it.amount) }
+            if (total <= 0.0) {
+                Pair(emptyList<CategorySpendingItem>(), 0.0)
+            } else {
+                val grouped = periodTxns.groupBy { com.autoexpense.app.ui.cleanCategoryName(it.category).ifBlank { "Other" } }
+                val palette = listOf(
+                    ColorOrange, ColorAmber, ColorGreen, Color(0xFF42A5F5),
+                    Color(0xFFAB47BC), Color(0xFF26A69A), Color(0xFFEC407A),
+                    Color(0xFF7E57C2), Color(0xFF8D6E63), Color(0xFF78909C)
+                )
+                val computed = grouped.map { (catName, txList) ->
+                    val catSum = txList.sumOf { DashboardViewModel.parseAmount(it.amount) }
+                    val pct = if (total > 0) ((catSum / total) * 100).toFloat() else 0f
+                    Triple(catName, catSum, pct)
+                }.filter { it.second > 0.0 }.sortedByDescending { it.second }
+
+                val finalItems = computed.mapIndexed { idx, triple ->
+                    CategorySpendingItem(
+                        categoryName = triple.first,
+                        amount = triple.second,
+                        percentage = triple.third,
+                        color = palette[idx % palette.size]
+                    )
+                }
+                Pair(finalItems, total)
+            }
+        }
+    }
+
+    val animProgress = remember { androidx.compose.animation.core.Animatable(0f) }
+    LaunchedEffect(items) {
+        animProgress.snapTo(0f)
+        animProgress.animateTo(
+            targetValue = 1f,
+            animationSpec = tween(durationMillis = 850, easing = androidx.compose.animation.core.FastOutSlowInEasing)
+        )
+    }
+
+    Card(
+        colors = CardDefaults.cardColors(containerColor = ColorBg2),
+        shape = RoundedCornerShape(22.dp),
+        border = BorderStroke(1.dp, ColorBg3),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(modifier = Modifier.padding(18.dp)) {
+            // Header Row
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column {
+                    Text("SPENDING BY CATEGORY", fontSize = 10.sp, color = ColorText3, fontWeight = FontWeight.Bold)
+                    Spacer(modifier = Modifier.height(4.dp))
+                    val formatInr = "₹" + if (totalAmount == 0.0) "0" else String.format(java.util.Locale.US, "%,.2f", totalAmount)
+                    Text(formatInr, fontSize = 18.sp, fontWeight = FontWeight.Bold, color = ColorText1)
+                }
+                Row(
+                    modifier = Modifier
+                        .background(ColorBg3, RoundedCornerShape(8.dp))
+                        .padding(2.dp)
+                ) {
+                    val weeklyBg = if (periodType == "weekly") ColorOrange else Color.Transparent
+                    val weeklyText = if (periodType == "weekly") Color.White else ColorText2
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(weeklyBg)
+                            .clickable { onPeriodChange("weekly") }
+                            .padding(horizontal = 10.dp, vertical = 5.dp)
+                    ) {
+                        Text("Weekly", fontSize = 11.sp, color = weeklyText, fontWeight = FontWeight.Bold)
+                    }
+                    val monthlyBg = if (periodType == "monthly") ColorOrange else Color.Transparent
+                    val monthlyText = if (periodType == "monthly") Color.White else ColorText2
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(monthlyBg)
+                            .clickable { onPeriodChange("monthly") }
+                            .padding(horizontal = 10.dp, vertical = 5.dp)
+                    ) {
+                        Text("Monthly", fontSize = 11.sp, color = monthlyText, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(20.dp))
+
+            if (items.isEmpty()) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(160.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text("No confirmed spending in this period", color = ColorText2, fontSize = 13.sp)
+                }
+            } else {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(180.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Canvas(modifier = Modifier.size(160.dp)) {
+                        val strokeW = 22.dp.toPx()
+                        var startAngle = -90f
+                        items.forEach { item ->
+                            val sweepAngle = (item.percentage / 100f) * 360f * animProgress.value
+                            if (sweepAngle > 0f) {
+                                drawArc(
+                                    color = item.color,
+                                    startAngle = startAngle,
+                                    sweepAngle = sweepAngle,
+                                    useCenter = false,
+                                    style = Stroke(width = strokeW, cap = androidx.compose.ui.graphics.StrokeCap.Butt)
+                                )
+                                startAngle += (item.percentage / 100f) * 360f
+                            }
+                        }
+                    }
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text("TOTAL", fontSize = 10.sp, color = ColorText3, fontWeight = FontWeight.Bold)
+                        val formatInr = "₹" + if (totalAmount == 0.0) "0" else String.format(java.util.Locale.US, "%,.2f", totalAmount)
+                        Text(formatInr, fontSize = 15.sp, fontWeight = FontWeight.Bold, color = ColorText1)
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    items.forEach { item ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(10.dp)
+                                        .clip(RoundedCornerShape(3.dp))
+                                        .background(item.color)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Icon(
+                                    imageVector = com.autoexpense.app.ui.getCategoryIcon(item.categoryName),
+                                    contentDescription = null,
+                                    tint = ColorText1,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = item.categoryName,
+                                    fontSize = 13.sp,
+                                    color = ColorText1,
+                                    fontWeight = FontWeight.Medium
+                                )
+                            }
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    text = "${String.format(java.util.Locale.US, "%.1f", item.percentage)}%",
+                                    fontSize = 12.sp,
+                                    color = ColorText2,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Spacer(modifier = Modifier.width(12.dp))
+                                val amtFormatted = "₹" + if (item.amount == 0.0) "0" else String.format(java.util.Locale.US, "%,.2f", item.amount)
+                                Text(
+                                    text = amtFormatted,
+                                    fontSize = 13.sp,
+                                    color = ColorText1,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 // ── TRANSACTION TABLE ─────────────────────────────────────────────────────
 @Composable
 fun TransactionTable(transactions: List<Transaction>) {
     Card(
         colors = CardDefaults.cardColors(containerColor = ColorBg2),
-        shape = RoundedCornerShape(12.dp),
+        shape = RoundedCornerShape(22.dp),
         border = BorderStroke(1.dp, ColorBg3),
         modifier = Modifier.fillMaxWidth()
     ) {
@@ -1268,7 +1582,7 @@ fun TransactionTable(transactions: List<Transaction>) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 12.dp)
+                        .padding(horizontal = 18.dp, vertical = 14.dp)
                         .drawBehind {
                             drawLine(
                                 color = ColorBg3,
@@ -1282,7 +1596,19 @@ fun TransactionTable(transactions: List<Transaction>) {
                 ) {
                     Column(modifier = Modifier.weight(1.5f)) {
                         Text(t.merchant, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = ColorText1)
-                        Text(t.sub, fontSize = 11.sp, color = ColorText3)
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            val cleanCat = com.autoexpense.app.ui.cleanCategoryName(t.category)
+                            Icon(
+                                imageVector = com.autoexpense.app.ui.getCategoryIcon(cleanCat),
+                                contentDescription = null,
+                                tint = ColorText3,
+                                modifier = Modifier.size(13.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            val subLabel = if (t.sub.isNotBlank() && t.sub != cleanCat) "${t.sub} · $cleanCat" else cleanCat
+                            Text(subLabel, fontSize = 11.sp, color = ColorText3)
+                        }
                     }
 
                     Box(
@@ -1322,7 +1648,10 @@ fun TransactionTable(transactions: List<Transaction>) {
 
 // ── RECEIPTS LEDGER SCREEN ────────────────────────────────────────────────
 @Composable
-fun ReceiptsLedgerScreen(viewModel: ReceiptsViewModel) {
+fun ReceiptsLedgerScreen(
+    viewModel: ReceiptsViewModel,
+    onNavigateToExport: () -> Unit = {}
+) {
     val confirmedTxns by viewModel.confirmedTransactions.collectAsState()
 
     Column(
@@ -1331,13 +1660,33 @@ fun ReceiptsLedgerScreen(viewModel: ReceiptsViewModel) {
             .background(ColorBg0)
             .padding(16.dp)
     ) {
-        Text("Receipts Ledger", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = ColorText1)
-        Text(
-            "All your confirmed UPI transactions in one place.",
-            fontSize = 12.sp,
-            color = ColorText2,
-            modifier = Modifier.padding(bottom = 16.dp)
-        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column {
+                Text("Receipts Ledger", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = ColorText1)
+                Text(
+                    "All your confirmed UPI transactions in one place.",
+                    fontSize = 12.sp,
+                    color = ColorText2,
+                    modifier = Modifier.padding(bottom = 16.dp)
+                )
+            }
+
+            OutlinedButton(
+                onClick = onNavigateToExport,
+                border = BorderStroke(1.dp, ColorBg3),
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = ColorText2),
+                shape = RoundedCornerShape(10.dp),
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+            ) {
+                Icon(Icons.Default.Download, contentDescription = null, tint = ColorText2, modifier = Modifier.size(16.dp))
+                Spacer(modifier = Modifier.width(6.dp))
+                Text("Export", fontSize = 12.sp, color = ColorText2)
+            }
+        }
 
         if (confirmedTxns.isEmpty()) {
             Box(
@@ -1375,142 +1724,344 @@ fun NeedsReviewScreen(
     val reviewTxns by viewModel.pendingTransactions.collectAsState()
     var currentSuggestionId by remember { mutableStateOf("") }
     var thinkingForCardId by remember { mutableStateOf("") }
+    var showSuccessAnimation by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(ColorBg0)
-            .padding(16.dp)
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
+    if (showSuccessAnimation) {
+        LaunchedEffect(showSuccessAnimation) {
+            delay(1200)
+            showSuccessAnimation = false
+        }
+    }
+
+    Box(modifier = Modifier.fillMaxSize()) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(ColorBg0)
+                .padding(16.dp)
         ) {
-            Column {
-                Text("Needs Review", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = ColorText1)
-                Text(
-                    "${reviewTxns.size} transactions need attention",
-                    fontSize = 12.sp,
-                    color = ColorText2
-                )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column {
+                    Text("Needs Review", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = ColorText1)
+                    Text(
+                        "${reviewTxns.size} transactions need attention",
+                        fontSize = 12.sp,
+                        color = ColorText2
+                    )
+                }
+
+                if (reviewTxns.isNotEmpty()) {
+                    Button(
+                        onClick = {
+                            viewModel.approveAll {
+                                scope.launch {
+                                    showSuccessAnimation = true
+                                }
+                            }
+                            scope.launch {
+                                snackbarHostState.showSnackbar("All expenses categorized successfully")
+                            }
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = ColorOrange),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Text("Approve All", fontSize = 12.sp, color = Color.White)
+                    }
+                }
             }
 
-            if (reviewTxns.isNotEmpty()) {
-                Button(
-                    onClick = {
-                        viewModel.approveAll()
-                        scope.launch {
-                            snackbarHostState.showSnackbar("All expenses categorized successfully")
-                        }
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = ColorOrange),
-                    shape = RoundedCornerShape(8.dp)
+            Spacer(modifier = Modifier.height(16.dp))
+
+            if (reviewTxns.isEmpty()) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(24.dp),
+                    contentAlignment = Alignment.Center
                 ) {
-                    Text("Approve All", fontSize = 12.sp, color = Color.White)
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Icon(Icons.Default.DoneAll, contentDescription = null, modifier = Modifier.size(56.dp), tint = ColorGreen)
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Text("All transactions caught up!", color = ColorText1, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                        Spacer(modifier = Modifier.height(8.dp))
+                        TextButton(onClick = onBackToDashboard) {
+                            Text("← Back to Dashboard", color = ColorOrange)
+                        }
+                    }
+                }
+            } else {
+                Box(modifier = Modifier.weight(1f)) {
+                    Column(
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                        modifier = Modifier.verticalScroll(rememberScrollState())
+                    ) {
+                        reviewTxns.forEach { t ->
+                            key(t.id) {
+                                ReviewCard(
+                                    txn = t,
+                                    isThinking = thinkingForCardId == t.id,
+                                    suggestedChipId = currentSuggestionId,
+                                    onAiSuggest = {
+                                        thinkingForCardId = t.id
+                                        scope.launch {
+                                            delay(1200)
+                                            thinkingForCardId = ""
+                                            val lv = t.merchant.toLowerCase()
+                                            currentSuggestionId = when {
+                                                lv.contains("rahul") -> "rc1_food"
+                                                lv.contains("unknown") -> "rc2_grocery"
+                                                lv.contains("priya") -> "rc3_personal"
+                                                else -> ""
+                                            }
+                                        }
+                                    },
+                                    onConfirm = { selectedCat ->
+                                        viewModel.confirmTransaction(t.id, selectedCat) {
+                                            scope.launch {
+                                                showSuccessAnimation = true
+                                            }
+                                        }
+                                        scope.launch {
+                                            // Parse raw amount from stored string e.g. "−₹450" -> 450.0
+                                            val rawAmt = t.amount
+                                                .replace("−₹", "")
+                                                .replace(",", "")
+                                                .trim()
+                                                .toDoubleOrNull() ?: 0.0
+
+                                            // Small delay so Room flush completes
+                                            delay(300)
+                                            budgetViewModel.refreshSpending()
+
+                                            val warnings = withContext(Dispatchers.IO) {
+                                                BudgetRepositorySingleton.instance.checkBudgetWarnings(
+                                                    category = selectedCat,
+                                                    amount   = rawAmt,
+                                                    seenWarningKeys = seenWarningKeys
+                                                )
+                                            }
+
+                                            if (warnings.isEmpty()) {
+                                                snackbarHostState.showSnackbar("Expense categorized successfully")
+                                            } else {
+                                                // Show most-severe warning first
+                                                val primary = warnings.first()
+                                                snackbarHostState.showSnackbar(
+                                                    message     = primary.message,
+                                                    actionLabel = if (warnings.size > 1) "More" else null,
+                                                    duration    = SnackbarDuration.Long
+                                                )
+
+                                                // Send Android notification for each warning
+                                                warnings.forEachIndexed { idx, w ->
+                                                    BudgetNotificationHelper.sendWarning(
+                                                        context        = context,
+                                                        warning        = w,
+                                                        notificationId = (w.budgetId * 10 + idx).toInt()
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    },
+                                    onIgnore = {
+                                        viewModel.ignoreTransaction(t.id)
+                                        scope.launch {
+                                            snackbarHostState.showSnackbar("Transaction ignored")
+                                        }
+                                    }
+                                )
+                            }
+                        }
+                    }
                 }
             }
         }
 
-        Spacer(modifier = Modifier.height(16.dp))
-
-        if (reviewTxns.isEmpty()) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(24.dp),
-                contentAlignment = Alignment.Center
+        androidx.compose.animation.AnimatedVisibility(
+            visible = showSuccessAnimation,
+            enter = fadeIn(animationSpec = tween(200)) + scaleIn(initialScale = 0.85f, animationSpec = tween(200)),
+            exit = fadeOut(animationSpec = tween(200)) + scaleOut(targetScale = 0.85f, animationSpec = tween(200)),
+            modifier = Modifier.align(Alignment.Center)
+        ) {
+            Card(
+                colors = CardDefaults.cardColors(containerColor = ColorBg2),
+                shape = RoundedCornerShape(22.dp),
+                border = BorderStroke(1.dp, ColorOrange),
+                elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
             ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Icon(Icons.Default.DoneAll, contentDescription = null, modifier = Modifier.size(56.dp), tint = ColorGreen)
-                    Spacer(modifier = Modifier.height(12.dp))
-                    Text("All transactions caught up!", color = ColorText1, fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                    Spacer(modifier = Modifier.height(8.dp))
-                    TextButton(onClick = onBackToDashboard) {
-                        Text("← Back to Dashboard", color = ColorOrange)
+                Row(
+                    modifier = Modifier.padding(horizontal = 24.dp, vertical = 18.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    val checkAnim = remember { androidx.compose.animation.core.Animatable(0f) }
+                    LaunchedEffect(showSuccessAnimation) {
+                        checkAnim.animateTo(
+                            targetValue = 1f,
+                            animationSpec = tween(350, easing = androidx.compose.animation.core.FastOutSlowInEasing)
+                        )
                     }
+                    Box(
+                        modifier = Modifier
+                            .size(28.dp)
+                            .clip(CircleShape)
+                            .background(ColorOrange.copy(alpha = 0.2f))
+                            .border(1.5.dp, ColorOrange, CircleShape),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Outlined.Check,
+                            contentDescription = null,
+                            tint = Color.White,
+                            modifier = Modifier
+                                .size(18.dp)
+                                .scale(checkAnim.value)
+                                .alpha(checkAnim.value)
+                        )
+                    }
+                    Text(
+                        text = "Expense added",
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = ColorText1
+                    )
                 }
             }
-        } else {
-            Box(modifier = Modifier.weight(1f)) {
-                Column(
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
-                    modifier = Modifier.verticalScroll(rememberScrollState())
+        }
+    }
+}
+
+@Composable
+fun CreateCategoryDialog(
+    onDismiss: () -> Unit,
+    onCreate: (name: String, iconName: String) -> Unit
+) {
+    var categoryName by remember { mutableStateOf("") }
+    val iconOptions = listOf(
+        "ShoppingBag" to Icons.Outlined.ShoppingBag,
+        "SportsEsports" to Icons.Outlined.SportsEsports,
+        "School" to Icons.Outlined.School,
+        "FitnessCenter" to Icons.Outlined.FitnessCenter,
+        "Subscriptions" to Icons.Outlined.Subscriptions,
+        "Paid" to Icons.Outlined.Paid,
+        "StarOutline" to Icons.Outlined.StarOutline,
+        "FavoriteBorder" to Icons.Outlined.FavoriteBorder,
+        "WorkOutline" to Icons.Outlined.WorkOutline,
+        "Restaurant" to Icons.Outlined.Restaurant,
+        "DirectionsCar" to Icons.Outlined.DirectionsCar,
+        "Home" to Icons.Outlined.Home,
+        "Flight" to Icons.Outlined.Flight,
+        "LocalHospital" to Icons.Outlined.LocalHospital,
+        "Movie" to Icons.Outlined.Movie,
+        "SwapHoriz" to Icons.Outlined.SwapHoriz
+    )
+    var selectedIconName by remember { mutableStateOf(iconOptions.first().first) }
+
+    Dialog(onDismissRequest = onDismiss) {
+        Card(
+            colors = CardDefaults.cardColors(containerColor = ColorBg2),
+            shape = RoundedCornerShape(22.dp),
+            border = BorderStroke(1.dp, ColorBg3),
+            modifier = Modifier.fillMaxWidth().padding(16.dp)
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(20.dp)
+            ) {
+                Text(
+                    text = "Create Custom Category",
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = ColorText1
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = "Examples: Shopping, Gaming, Education, Fitness, Subscriptions.",
+                    fontSize = 12.sp,
+                    color = ColorText2
+                )
+                Spacer(modifier = Modifier.height(16.dp))
+
+                OutlinedTextField(
+                    value = categoryName,
+                    onValueChange = { categoryName = it },
+                    label = { Text("Category Name", color = ColorText3) },
+                    singleLine = true,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = ColorOrange,
+                        unfocusedBorderColor = ColorBg3,
+                        focusedTextColor = ColorText1,
+                        unfocusedTextColor = ColorText1
+                    ),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                Spacer(modifier = Modifier.height(16.dp))
+                Text(
+                    text = "Select Icon",
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = ColorText2
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+
+                FlowRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    reviewTxns.forEach { t ->
-                        key(t.id) {
-                            ReviewCard(
-                                txn = t,
-                                isThinking = thinkingForCardId == t.id,
-                                suggestedChipId = currentSuggestionId,
-                                onAiSuggest = {
-                                    thinkingForCardId = t.id
-                                    scope.launch {
-                                        delay(1200)
-                                        thinkingForCardId = ""
-                                        val lv = t.merchant.toLowerCase()
-                                        currentSuggestionId = when {
-                                            lv.contains("rahul") -> "rc1_food"
-                                            lv.contains("unknown") -> "rc2_grocery"
-                                            lv.contains("priya") -> "rc3_personal"
-                                            else -> ""
-                                        }
-                                    }
-                                },
-                                onConfirm = { selectedCat ->
-                                    viewModel.confirmTransaction(t.id, selectedCat)
-                                    scope.launch {
-                                        // Parse raw amount from stored string e.g. "−₹450" -> 450.0
-                                        val rawAmt = t.amount
-                                            .replace("−₹", "")
-                                            .replace(",", "")
-                                            .trim()
-                                            .toDoubleOrNull() ?: 0.0
-
-                                        // Small delay so Room flush completes
-                                        delay(300)
-                                        budgetViewModel.refreshSpending()
-
-                                        val warnings = withContext(Dispatchers.IO) {
-                                            BudgetRepositorySingleton.instance.checkBudgetWarnings(
-                                                category = selectedCat,
-                                                amount   = rawAmt,
-                                                seenWarningKeys = seenWarningKeys
-                                            )
-                                        }
-
-                                        if (warnings.isEmpty()) {
-                                            snackbarHostState.showSnackbar("Expense categorized successfully")
-                                        } else {
-                                            // Show most-severe warning first
-                                            val primary = warnings.first()
-                                            snackbarHostState.showSnackbar(
-                                                message     = primary.message,
-                                                actionLabel = if (warnings.size > 1) "More" else null,
-                                                duration    = SnackbarDuration.Long
-                                            )
-
-                                            // Send Android notification for each warning
-                                            warnings.forEachIndexed { idx, w ->
-                                                BudgetNotificationHelper.sendWarning(
-                                                    context        = context,
-                                                    warning        = w,
-                                                    notificationId = (w.budgetId * 10 + idx).toInt()
-                                                )
-                                            }
-                                        }
-                                    }
-                                },
-                                onIgnore = {
-                                    viewModel.ignoreTransaction(t.id)
-                                    scope.launch {
-                                        snackbarHostState.showSnackbar("Transaction ignored")
-                                    }
-                                }
+                    iconOptions.forEach { (name, vector) ->
+                        val isSelected = selectedIconName == name
+                        Box(
+                            modifier = Modifier
+                                .size(40.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(if (isSelected) ColorOrange else ColorBg3)
+                                .clickable { selectedIconName = name },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = vector,
+                                contentDescription = name,
+                                tint = if (isSelected) Color.White else ColorText1,
+                                modifier = Modifier.size(20.dp)
                             )
                         }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(24.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    TextButton(onClick = onDismiss) {
+                        Text("Cancel", color = ColorText2)
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Button(
+                        onClick = {
+                            val clean = categoryName.trim()
+                            if (clean.isNotBlank()) {
+                                onCreate(clean, selectedIconName)
+                                onDismiss()
+                            }
+                        },
+                        enabled = categoryName.trim().isNotBlank(),
+                        colors = ButtonDefaults.buttonColors(containerColor = ColorOrange),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Text("Create", color = Color.White, fontWeight = FontWeight.Bold)
                     }
                 }
             }
@@ -1530,15 +2081,16 @@ fun ReviewCard(
     var noteText by remember { mutableStateOf("") }
     var selectedCategory by remember { mutableStateOf("") }
     var isConfirming by remember { mutableStateOf(false) }
+    var showCreateDialog by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
     Card(
         colors = CardDefaults.cardColors(containerColor = ColorBg2),
-        shape = RoundedCornerShape(12.dp),
+        shape = RoundedCornerShape(22.dp),
         border = BorderStroke(1.dp, ColorBg3),
         modifier = Modifier.fillMaxWidth()
     ) {
-        Column(modifier = Modifier.padding(16.dp)) {
+        Column(modifier = Modifier.padding(18.dp)) {
             // Header
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -1552,14 +2104,12 @@ fun ReviewCard(
                             .background(ColorBg3, CircleShape),
                         contentAlignment = Alignment.Center
                     ) {
-                        Text(
-                            text = when {
-                                txn.notificationExcerpt.isNotEmpty() -> "🔔"
-                                txn.merchant.contains("Rahul") || txn.merchant.contains("Priya") -> "👤"
-                                else -> "❓"
-                            },
-                            fontSize = 16.sp
-                        )
+                        val iconVector = when {
+                            txn.notificationExcerpt.isNotEmpty() -> Icons.Outlined.Notifications
+                            txn.merchant.contains("Rahul") || txn.merchant.contains("Priya") -> Icons.Outlined.Person
+                            else -> Icons.Outlined.HelpOutline
+                        }
+                        Icon(iconVector, contentDescription = null, tint = ColorText1, modifier = Modifier.size(18.dp))
                     }
                     Spacer(modifier = Modifier.width(8.dp))
                     Column {
@@ -1576,15 +2126,15 @@ fun ReviewCard(
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .background(ColorBg3, RoundedCornerShape(6.dp))
-                    .padding(8.dp)
+                    .background(ColorBg3, RoundedCornerShape(8.dp))
+                    .padding(10.dp)
             ) {
                 val hint = when {
                     txn.notificationExcerpt.isNotEmpty() ->
-                        "📱 \"${txn.notificationExcerpt}\"\n${txn.detectionReason}"
-                    txn.merchant.contains("Rahul") -> "💡 This looks like a person-to-person transfer. What was it for?"
-                    txn.merchant.contains("Unknown") -> "💡 We couldn't identify this merchant. Add a note to categorize it."
-                    else -> "💡 P2P transfer detected. What was the purpose?"
+                        "\"${txn.notificationExcerpt}\"\n${txn.detectionReason}"
+                    txn.merchant.contains("Rahul") -> "This looks like a person-to-person transfer. What was it for?"
+                    txn.merchant.contains("Unknown") -> "We couldn't identify this merchant. Add a note to categorize it."
+                    else -> "P2P transfer detected. What was the purpose?"
                 }
                 Text(hint, color = ColorText2, fontSize = 12.sp)
             }
@@ -1608,6 +2158,7 @@ fun ReviewCard(
                         focusedTextColor = ColorText1,
                         unfocusedTextColor = ColorText1
                     ),
+                    shape = RoundedCornerShape(10.dp),
                     modifier = Modifier.weight(1.5f)
                 )
 
@@ -1615,13 +2166,17 @@ fun ReviewCard(
                     onClick = onAiSuggest,
                     colors = ButtonDefaults.buttonColors(containerColor = ColorOrangeDim),
                     border = BorderStroke(1.dp, ColorOrange.copy(alpha = 0.3f)),
-                    shape = RoundedCornerShape(8.dp),
+                    shape = RoundedCornerShape(10.dp),
                     modifier = Modifier.weight(1f)
                 ) {
                     if (isThinking) {
                         CircularProgressIndicator(color = ColorOrange, modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
                     } else {
-                        Text("🤖 AI Suggest", fontSize = 11.sp, color = ColorOrange, maxLines = 1)
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Outlined.AutoAwesome, contentDescription = null, tint = ColorOrange, modifier = Modifier.size(14.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("AI Suggest", fontSize = 11.sp, color = ColorOrange, maxLines = 1)
+                        }
                     }
                 }
             }
@@ -1629,25 +2184,29 @@ fun ReviewCard(
             Spacer(modifier = Modifier.height(12.dp))
 
             // Categories Chips
-            val chips = when {
+            val customCategories by com.autoexpense.app.data.CustomCategoryRepository.customCategories.collectAsState(
+                initial = emptyList()
+            )
+            val baseChips = when {
                 txn.merchant.contains("Rahul") -> listOf(
-                    "🍔 Food & Dining" to "rc1_food",
-                    "🎉 Entertainment" to "rc1_ent",
-                    "🏠 Rent / Bills" to "rc1_rent",
-                    "💸 Personal Transfer" to "rc1_personal"
+                    "Food & Dining" to "rc1_food",
+                    "Entertainment" to "rc1_ent",
+                    "Rent / Bills" to "rc1_rent",
+                    "Personal Transfer" to "rc1_personal"
                 )
                 txn.merchant.contains("Unknown") -> listOf(
-                    "🛒 Groceries" to "rc2_grocery",
-                    "🍔 Food & Dining" to "rc2_food",
-                    "💊 Healthcare" to "rc2_health",
-                    "🚗 Transport" to "rc2_trans"
+                    "Groceries" to "rc2_grocery",
+                    "Food & Dining" to "rc2_food",
+                    "Healthcare" to "rc2_health",
+                    "Transport" to "rc2_trans"
                 )
                 else -> listOf(
-                    "✈️ Travel" to "rc3_travel",
-                    "🍔 Food & Dining" to "rc3_food",
-                    "💸 Personal Transfer" to "rc3_personal"
+                    "Travel" to "rc3_travel",
+                    "Food & Dining" to "rc3_food",
+                    "Personal Transfer" to "rc3_personal"
                 )
             }
+            val chips = baseChips + customCategories.map { it.name to "custom_${it.id}" }
 
             // Pre-select AI suggestion automatically if ready
             LaunchedEffect(suggestedChipId) {
@@ -1664,16 +2223,52 @@ fun ReviewCard(
             ) {
                 chips.forEach { chip ->
                     val isSelected = selectedCategory == chip.first
-                    Box(
+                    Row(
                         modifier = Modifier
-                            .clip(CircleShape)
-                            .background(if (isSelected) ColorOrangeDim else ColorBg3)
-                            .border(1.dp, if (isSelected) ColorOrange else ColorBg3, CircleShape)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(if (isSelected) ColorOrange else ColorBg3)
                             .clickable { selectedCategory = chip.first }
-                            .padding(horizontal = 10.dp, vertical = 6.dp)
+                            .padding(horizontal = 10.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(chip.first, fontSize = 11.sp, color = if (isSelected) ColorOrange else ColorText2)
+                        Icon(
+                            imageVector = com.autoexpense.app.ui.getCategoryIcon(chip.first),
+                            contentDescription = null,
+                            tint = if (isSelected) Color.White else ColorText2,
+                            modifier = Modifier.size(14.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = chip.first,
+                            fontSize = 11.sp,
+                            color = if (isSelected) Color.White else ColorText2,
+                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                        )
                     }
+                }
+
+                Row(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(ColorBg3)
+                        .border(1.dp, ColorOrange, RoundedCornerShape(8.dp))
+                        .clickable { showCreateDialog = true }
+                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Outlined.Add,
+                        contentDescription = null,
+                        tint = ColorOrange,
+                        modifier = Modifier.size(14.dp)
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        text = "+ Create category",
+                        fontSize = 11.sp,
+                        color = ColorOrange,
+                        fontWeight = FontWeight.Bold
+                    )
                 }
             }
 
@@ -1719,6 +2314,17 @@ fun ReviewCard(
                         Text("Confirm Category", color = Color.White, fontSize = 12.sp)
                     }
                 }
+            }
+
+            if (showCreateDialog) {
+                CreateCategoryDialog(
+                    onDismiss = { showCreateDialog = false },
+                    onCreate = { name, iconName ->
+                        com.autoexpense.app.data.CustomCategoryRepository.addCategory(name, iconName) {
+                            selectedCategory = name
+                        }
+                    }
+                )
             }
         }
     }

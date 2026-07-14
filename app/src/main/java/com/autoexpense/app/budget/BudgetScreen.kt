@@ -284,11 +284,11 @@ fun OverallBudgetCard(
 ) {
     Card(
         colors = CardDefaults.cardColors(containerColor = ColorBg2),
-        shape = RoundedCornerShape(12.dp),
+        shape = RoundedCornerShape(22.dp),
         border = BorderStroke(1.dp, ColorBg3),
         modifier = Modifier.fillMaxWidth()
     ) {
-        Column(modifier = Modifier.padding(16.dp)) {
+        Column(modifier = Modifier.padding(20.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -328,32 +328,34 @@ fun OverallBudgetCard(
                 BudgetLevel.EXCEEDED -> ColorRed
                 BudgetLevel.LIMIT_REACHED -> ColorOrange
                 BudgetLevel.HIGH_WARNING -> ColorOrange
-                BudgetLevel.WARNING -> ColorAmber
                 BudgetLevel.NORMAL -> ColorGreen
+                BudgetLevel.WARNING -> ColorAmber
             }
 
             LinearProgressIndicator(
                 progress = { item.percentage.coerceIn(0f, 1f) },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(6.dp)
-                    .clip(RoundedCornerShape(3.dp)),
+                    .height(8.dp)
+                    .clip(RoundedCornerShape(4.dp)),
                 color = barColor,
                 trackColor = ColorBg3
             )
 
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(14.dp))
 
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.End
-            ) {
-                TextButton(onClick = onEdit) {
-                    Text("Edit", color = ColorOrange, fontSize = 12.sp)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(
+                    onClick = onEdit,
+                    border = BorderStroke(1.dp, ColorBg3),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = ColorText2),
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier.height(36.dp)
+                ) {
+                    Text("Edit", fontSize = 12.sp)
                 }
-                Spacer(modifier = Modifier.width(8.dp))
-                TextButton(onClick = onDelete) {
-                    Text("Delete", color = ColorText3, fontSize = 12.sp)
+                TextButton(onClick = onDelete, modifier = Modifier.height(36.dp)) {
+                    Text("Remove", fontSize = 12.sp, color = ColorRed)
                 }
             }
         }
@@ -369,24 +371,24 @@ fun EmptyOverallCard(
 ) {
     Card(
         colors = CardDefaults.cardColors(containerColor = ColorBg2),
-        shape = RoundedCornerShape(12.dp),
+        shape = RoundedCornerShape(22.dp),
         border = BorderStroke(1.dp, ColorBg3),
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(16.dp)
+                .padding(20.dp)
         ) {
             Text(title, fontSize = 16.sp, fontWeight = FontWeight.Bold, color = ColorText1)
             Spacer(modifier = Modifier.height(4.dp))
             Text(subtitle, fontSize = 12.sp, color = ColorText2)
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(14.dp))
             Button(
                 onClick = onClick,
                 colors = ButtonDefaults.buttonColors(containerColor = ColorOrange),
-                shape = RoundedCornerShape(6.dp),
-                modifier = Modifier.height(36.dp)
+                shape = RoundedCornerShape(10.dp),
+                modifier = Modifier.height(38.dp)
             ) {
                 Text(buttonText, fontSize = 12.sp, color = Color.White)
             }
@@ -402,19 +404,26 @@ fun CategoryBudgetCard(
 ) {
     Card(
         colors = CardDefaults.cardColors(containerColor = ColorBg2),
-        shape = RoundedCornerShape(12.dp),
+        shape = RoundedCornerShape(22.dp),
         border = BorderStroke(1.dp, ColorBg3),
         modifier = Modifier.fillMaxWidth()
     ) {
-        Column(modifier = Modifier.padding(16.dp)) {
+        Column(modifier = Modifier.padding(18.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = com.autoexpense.app.ui.getCategoryIcon(item.budget.category ?: "Unknown"),
+                        contentDescription = null,
+                        tint = Color.White,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
                     Text(
-                        item.budget.category ?: "Unknown",
+                        com.autoexpense.app.ui.cleanCategoryName(item.budget.category ?: "Unknown"),
                         fontSize = 15.sp,
                         fontWeight = FontWeight.Bold,
                         color = ColorText1
@@ -422,7 +431,7 @@ fun CategoryBudgetCard(
                     Spacer(modifier = Modifier.width(8.dp))
                     Box(
                         modifier = Modifier
-                            .clip(RoundedCornerShape(4.dp))
+                            .clip(RoundedCornerShape(6.dp))
                             .background(ColorBg3)
                             .padding(horizontal = 6.dp, vertical = 2.dp)
                     ) {
@@ -437,25 +446,38 @@ fun CategoryBudgetCard(
                 StatusChip(level = item.level, pct = (item.percentage * 100).toInt())
             }
 
-            Spacer(modifier = Modifier.height(10.dp))
+            Spacer(modifier = Modifier.height(12.dp))
 
             val spentStr = formatRupee(item.spent)
             val limitStr = formatRupee(item.budget.limitAmount)
             Text(
                 text = "$spentStr spent of $limitStr",
-                fontSize = 14.sp,
+                fontSize = 16.sp,
                 fontWeight = FontWeight.Bold,
                 color = ColorText1
             )
 
-            Spacer(modifier = Modifier.height(8.dp))
+            val remaining = item.budget.limitAmount - item.spent
+            val subtext = if (remaining >= 0) {
+                "${formatRupee(remaining)} remaining"
+            } else {
+                "${formatRupee(-remaining)} over limit"
+            }
+            Text(
+                text = subtext,
+                fontSize = 11.sp,
+                color = if (remaining >= 0) ColorText2 else ColorRed,
+                modifier = Modifier.padding(top = 2.dp)
+            )
+
+            Spacer(modifier = Modifier.height(10.dp))
 
             val barColor = when (item.level) {
                 BudgetLevel.EXCEEDED -> ColorRed
                 BudgetLevel.LIMIT_REACHED -> ColorOrange
                 BudgetLevel.HIGH_WARNING -> ColorOrange
-                BudgetLevel.WARNING -> ColorAmber
                 BudgetLevel.NORMAL -> ColorGreen
+                BudgetLevel.WARNING -> ColorAmber
             }
 
             LinearProgressIndicator(
@@ -468,18 +490,20 @@ fun CategoryBudgetCard(
                 trackColor = ColorBg3
             )
 
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(12.dp))
 
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.End
-            ) {
-                TextButton(onClick = onEdit, modifier = Modifier.height(32.dp)) {
-                    Text("Edit", color = ColorOrange, fontSize = 12.sp)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(
+                    onClick = onEdit,
+                    border = BorderStroke(1.dp, ColorBg3),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = ColorText2),
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier.height(34.dp)
+                ) {
+                    Text("Edit", fontSize = 11.sp)
                 }
-                Spacer(modifier = Modifier.width(4.dp))
-                TextButton(onClick = onDelete, modifier = Modifier.height(32.dp)) {
-                    Text("Delete", color = ColorText3, fontSize = 12.sp)
+                TextButton(onClick = onDelete, modifier = Modifier.height(34.dp)) {
+                    Text("Remove", fontSize = 11.sp, color = ColorRed)
                 }
             }
         }
@@ -488,20 +512,20 @@ fun CategoryBudgetCard(
 
 @Composable
 fun StatusChip(level: BudgetLevel, pct: Int) {
-    val (text, color, bgColor) = when (level) {
-        BudgetLevel.EXCEEDED -> Triple("Exceeded ($pct%)", ColorRed, ColorRed.copy(alpha = 0.15f))
-        BudgetLevel.LIMIT_REACHED -> Triple("Limit reached (100%)", ColorOrange, ColorOrangeDim)
-        BudgetLevel.HIGH_WARNING -> Triple("Approaching limit ($pct%)", ColorOrange, ColorOrangeDim)
-        BudgetLevel.WARNING -> Triple("Approaching limit ($pct%)", ColorAmber, ColorAmber.copy(alpha = 0.15f))
-        BudgetLevel.NORMAL -> Triple("$pct% used", ColorGreen, ColorGreen.copy(alpha = 0.15f))
+    val (bg, fg, text) = when (level) {
+        BudgetLevel.EXCEEDED -> Triple(ColorRed.copy(alpha = 0.15f), ColorRed, "$pct% · Exceeded")
+        BudgetLevel.LIMIT_REACHED -> Triple(ColorOrange.copy(alpha = 0.15f), ColorOrange, "$pct% · Limit Reached")
+        BudgetLevel.HIGH_WARNING -> Triple(ColorOrange.copy(alpha = 0.15f), ColorOrange, "$pct% · High")
+        BudgetLevel.NORMAL -> Triple(ColorGreen.copy(alpha = 0.15f), ColorGreen, "$pct% · On Track")
+        BudgetLevel.WARNING -> Triple(ColorAmber.copy(alpha = 0.15f), ColorAmber, "$pct% · Warning")
     }
     Box(
         modifier = Modifier
             .clip(RoundedCornerShape(6.dp))
-            .background(bgColor)
+            .background(bg)
             .padding(horizontal = 8.dp, vertical = 4.dp)
     ) {
-        Text(text, fontSize = 11.sp, color = color, fontWeight = FontWeight.Bold)
+        Text(text, fontSize = 10.sp, color = fg, fontWeight = FontWeight.Bold)
     }
 }
 
@@ -523,7 +547,7 @@ fun SetOverallBudgetDialog(
     Dialog(onDismissRequest = onDismiss) {
         Card(
             colors = CardDefaults.cardColors(containerColor = ColorBg2),
-            shape = RoundedCornerShape(16.dp),
+            shape = RoundedCornerShape(22.dp),
             border = BorderStroke(1.dp, ColorBg3),
             modifier = Modifier.fillMaxWidth()
         ) {
@@ -600,17 +624,21 @@ fun CategoryBudgetDialog(
     onSave: (String, String, Double) -> Unit,
     externalError: String? = null
 ) {
-    val categories = listOf(
-        "🍔 Food & Dining",
-        "🚗 Transport",
-        "🛒 Groceries",
-        "🛍️ Shopping",
-        "🎉 Entertainment",
-        "💊 Healthcare",
-        "🏠 Rent / Bills",
-        "✈️ Travel",
-        "💸 Personal Transfer"
+    val customCategories by com.autoexpense.app.data.CustomCategoryRepository.customCategories.collectAsState(
+        initial = emptyList()
     )
+    val baseCategories = listOf(
+        "Food & Dining",
+        "Transport",
+        "Groceries",
+        "Shopping",
+        "Entertainment",
+        "Healthcare",
+        "Rent / Bills",
+        "Travel",
+        "Personal Transfer"
+    )
+    val categories = (baseCategories + customCategories.map { it.name }).distinct()
 
     var selectedCategory by remember {
         mutableStateOf(existingBudget?.category ?: categories.first())
@@ -626,7 +654,7 @@ fun CategoryBudgetDialog(
     Dialog(onDismissRequest = onDismiss) {
         Card(
             colors = CardDefaults.cardColors(containerColor = ColorBg2),
-            shape = RoundedCornerShape(16.dp),
+            shape = RoundedCornerShape(22.dp),
             border = BorderStroke(1.dp, ColorBg3),
             modifier = Modifier
                 .fillMaxWidth()
@@ -662,7 +690,16 @@ fun CategoryBudgetDialog(
                                 }
                                 .padding(horizontal = 10.dp, vertical = 6.dp)
                         ) {
-                            Text(cat, fontSize = 11.sp, color = if (isSelected) ColorOrange else ColorText2)
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    imageVector = com.autoexpense.app.ui.getCategoryIcon(cat),
+                                    contentDescription = null,
+                                    tint = if (isSelected) ColorOrange else ColorText2,
+                                    modifier = Modifier.size(13.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(cat, fontSize = 11.sp, color = if (isSelected) ColorOrange else ColorText2)
+                            }
                         }
                     }
                 }

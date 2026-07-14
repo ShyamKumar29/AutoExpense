@@ -8,13 +8,14 @@ import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
-    entities = [TransactionEntity::class, BudgetEntity::class],
-    version = 2,
+    entities = [TransactionEntity::class, BudgetEntity::class, CustomCategoryEntity::class],
+    version = 3,
     exportSchema = false
 )
 abstract class AutoExpenseDatabase : RoomDatabase() {
     abstract fun transactionDao(): TransactionDao
     abstract fun budgetDao(): BudgetDao
+    abstract fun customCategoryDao(): CustomCategoryDao
 
     companion object {
         @Volatile
@@ -46,6 +47,21 @@ abstract class AutoExpenseDatabase : RoomDatabase() {
             }
         }
 
+        /** Non-destructive migration: adds the custom_categories table introduced in version 3. */
+        private val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `custom_categories` (
+                        `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        `name` TEXT NOT NULL,
+                        `iconName` TEXT NOT NULL
+                    )
+                    """.trimIndent()
+                )
+            }
+        }
+
         fun getDatabase(context: Context): AutoExpenseDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -53,7 +69,7 @@ abstract class AutoExpenseDatabase : RoomDatabase() {
                     AutoExpenseDatabase::class.java,
                     "autoexpense_database"
                 )
-                    .addMigrations(MIGRATION_1_2)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
                     .build()
                 INSTANCE = instance
                 instance

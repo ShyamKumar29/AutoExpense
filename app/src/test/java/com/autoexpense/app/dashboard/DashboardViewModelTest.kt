@@ -86,7 +86,7 @@ class DashboardViewModelTest {
         val t3 = Transaction("3", "Uber", "", "phonepe", "🚗 Transport", "₹350", "14 Jul", "confirmed", timestamp = midMonth)
 
         val top = DashboardViewModel.computeTopCategory(listOf(t1, t2, t3), nowMs)
-        assertEquals("🍔 Food & Dining", top.label)
+        assertEquals("Food & Dining", top.label)
         assertEquals("₹1,000 · 2 txns", top.subText)
 
         val emptyTop = DashboardViewModel.computeTopCategory(emptyList(), nowMs)

@@ -237,7 +237,10 @@ fun ExportScreen(
             // 3. Optional Category Filter
             Text("OPTIONAL CATEGORY FILTER", fontSize = 11.sp, color = ColorText3, fontWeight = FontWeight.Bold)
             Spacer(modifier = Modifier.height(8.dp))
-            val categories = listOf(
+            val customCategories by com.autoexpense.app.data.CustomCategoryRepository.customCategories.collectAsState(
+                initial = emptyList()
+            )
+            val baseCategories = listOf(
                 ExportFilterHelper.CAT_ALL,
                 ExportFilterHelper.CAT_FOOD,
                 ExportFilterHelper.CAT_TRANSPORT,
@@ -249,6 +252,7 @@ fun ExportScreen(
                 ExportFilterHelper.CAT_PERSONAL,
                 ExportFilterHelper.CAT_OTHER
             )
+            val categories = (baseCategories.take(baseCategories.size - 1) + customCategories.map { it.name } + baseCategories.last()).distinct()
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -279,7 +283,7 @@ fun ExportScreen(
             // 4. Export Preview Card
             Card(
                 colors = CardDefaults.cardColors(containerColor = ColorBg2),
-                shape = RoundedCornerShape(12.dp),
+                shape = RoundedCornerShape(22.dp),
                 border = BorderStroke(1.dp, ColorOrange.copy(alpha = 0.4f)),
                 modifier = Modifier.fillMaxWidth()
             ) {
