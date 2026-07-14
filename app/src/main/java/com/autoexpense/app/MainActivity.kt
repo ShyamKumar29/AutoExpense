@@ -150,6 +150,10 @@ object TransactionRepository {
         }
     }
 
+    suspend fun getConfirmedEntities(context: Context): List<com.autoexpense.app.data.TransactionEntity> {
+        return AutoExpenseDatabase.getDatabase(context).transactionDao().getConfirmedTransactions()
+    }
+
     fun confirmTransaction(id: String, category: String) {
         coroutineScope.launch {
             dao.confirmTransaction(id, category)
@@ -295,7 +299,8 @@ fun MainAppContainer(
     receiptsViewModel: ReceiptsViewModel = viewModel(),
     reviewViewModel: ReviewViewModel = viewModel(),
     profileViewModel: ProfileViewModel = viewModel(),
-    budgetViewModel: BudgetViewModel = viewModel()
+    budgetViewModel: BudgetViewModel = viewModel(),
+    exportViewModel: com.autoexpense.app.export.ExportViewModel = viewModel()
 ) {
     var isUserLoggedIn by remember { mutableStateOf(false) }
     var activeScreen by remember { mutableStateOf("dashboard") }
@@ -352,6 +357,10 @@ fun MainAppContainer(
                     "profile" -> ProfileScreen(
                         viewModel = profileViewModel,
                         onNavigateBack = { activeScreen = "dashboard" }
+                    )
+                    "export" -> com.autoexpense.app.export.ExportScreen(
+                        viewModel = exportViewModel,
+                        onBackToDashboard = { activeScreen = "dashboard" }
                     )
                 }
             }
@@ -658,7 +667,7 @@ fun DashboardScreen(
                 }
 
                 OutlinedButton(
-                    onClick = {},
+                    onClick = { onNavigate("export") },
                     border = BorderStroke(1.dp, ColorBg3),
                     colors = ButtonDefaults.outlinedButtonColors(contentColor = ColorText2),
                     shape = RoundedCornerShape(8.dp),

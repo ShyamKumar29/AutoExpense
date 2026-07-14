@@ -17,6 +17,9 @@ interface TransactionDao {
     @Query("SELECT * FROM transactions WHERE status = 'confirmed' ORDER BY timestamp DESC")
     fun observeConfirmed(): Flow<List<TransactionEntity>>
 
+    @Query("SELECT * FROM transactions WHERE status = 'confirmed' ORDER BY timestamp DESC")
+    suspend fun getConfirmedTransactions(): List<TransactionEntity>
+
     @Query("SELECT * FROM transactions WHERE status = 'review' ORDER BY timestamp DESC")
     fun observeNeedsReview(): Flow<List<TransactionEntity>>
 
