@@ -38,6 +38,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 
 import androidx.compose.runtime.collectAsState
 import androidx.lifecycle.ViewModel
@@ -63,6 +66,9 @@ import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.outlined.NotificationsOff
 import com.autoexpense.app.notification.NotificationProcessor
+import com.autoexpense.app.data.AutoExpenseDatabase
+import com.autoexpense.app.data.TransactionDao
+import com.autoexpense.app.data.TransactionEntity
 
 // ── COLOR PALETTE ──────────────────────────────────────────────────────────
 val ColorBg0 = Color(0xFF0D0D0F)
@@ -116,48 +122,55 @@ data class Transaction(
 
 // ── TRANSACTION REPOSITORY (Single Source of Truth) ─────────────────────────
 object TransactionRepository {
-    private val _transactions = MutableStateFlow<List<Transaction>>(listOf(
-        Transaction("TXN001", "Swiggy", "Food Delivery", "gpay", "🍔 Food", "−₹342", "12 Jul, 3:41 PM", "confirmed"),
-        Transaction("TXN002", "Ola Cabs", "Ride Hailing", "phonepe", "🚗 Transport", "−₹180", "12 Jul, 1:12 PM", "confirmed"),
-        Transaction("TXN003", "Amazon", "E-Commerce", "gpay", "🛒 Shopping", "−₹1,299", "11 Jul, 9:00 PM", "confirmed"),
-        Transaction("TXN004", "Rahul Verma", "P2P Transfer", "phonepe", "❓ Unknown", "−₹1,500", "10 Jul, 2:45 PM", "review"),
-        Transaction("TXN005", "Zomato", "Food Delivery", "paytm", "🍔 Food", "−₹520", "10 Jul, 8:30 PM", "confirmed"),
-        Transaction("TXN006", "BigBasket", "Groceries", "bhim", "🛒 Groceries", "−₹1,840", "9 Jul, 11:00 AM", "confirmed"),
-        Transaction("TXN007", "Unknown Merchant", "Unidentified", "gpay", "❓ Unknown", "−₹850", "9 Jul, 7:12 PM", "review"),
-        Transaction("TXN008", "Netflix", "Subscription", "gpay", "📺 Subscriptions", "−₹649", "8 Jul, 12:00 AM", "confirmed"),
-        Transaction("TXN009", "Priya Sharma", "P2P Transfer", "paytm", "❓ Unknown", "−₹1,850", "8 Jul, 11:30 AM", "review"),
-        Transaction("TXN010", "Myntra", "Fashion", "gpay", "👗 Shopping", "−₹3,199", "7 Jul, 4:22 PM", "confirmed")
-    ))
+    private lateinit var dao: TransactionDao
+    private val coroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    private val _transactions = MutableStateFlow<List<Transaction>>(emptyList())
     val transactions = _transactions.asStateFlow()
 
-    fun confirmTransaction(id: String, category: String) {
-        _transactions.update { list ->
-            list.map {
-                if (it.id == id) it.copy(status = "confirmed", category = category) else it
+    fun init(context: Context) {
+        dao = AutoExpenseDatabase.getDatabase(context).transactionDao()
+        coroutineScope.launch {
+            dao.observeAll().collect { entities ->
+                _transactions.value = entities.map { it.toTransaction() }
             }
         }
     }
 
+    fun confirmTransaction(id: String, category: String) {
+        coroutineScope.launch {
+            dao.confirmTransaction(id, category)
+        }
+    }
+
     fun ignoreTransaction(id: String) {
-        _transactions.update { list ->
-            list.map {
-                if (it.id == id) it.copy(status = "ignored") else it
-            }
+        coroutineScope.launch {
+            dao.ignoreTransaction(id)
+        }
+    }
+
+    suspend fun existsByFingerprint(fingerprint: String): Boolean {
+        return dao.existsByFingerprint(fingerprint)
+    }
+
+    fun addTransactionEntity(entity: TransactionEntity) {
+        coroutineScope.launch {
+            dao.insert(entity)
         }
     }
 
     /** Insert a newly detected transaction at the top of the list (Phase 2). */
     fun addTransaction(t: Transaction) {
-        _transactions.update { current -> listOf(t) + current }
+        // Kept for fallback, but NotificationProcessor will use addTransactionEntity
     }
 
     fun approveAll(suggestions: Map<String, String>) {
-        _transactions.update { list ->
-            list.map {
+        coroutineScope.launch {
+            _transactions.value.forEach {
                 if (it.status == "review") {
                     val cat = suggestions[it.id] ?: "💸 Personal Transfer"
-                    it.copy(status = "confirmed", category = cat)
-                } else it
+                    dao.confirmTransaction(it.id, cat)
+                }
             }
         }
     }

@@ -8,6 +8,7 @@ import android.util.Log
 import com.autoexpense.app.BuildConfig
 import com.autoexpense.app.Transaction
 import com.autoexpense.app.TransactionRepository
+import kotlinx.coroutines.launch
 
 /**
  * Processes raw [StatusBarNotification] objects and, when a valid outgoing payment is
@@ -36,7 +37,7 @@ object NotificationProcessor {
         return FINANCIAL_KEYWORDS.any { lower.contains(it) }
     }
 
-    @Volatile private var fingerprintMap = HashMap<String, Long>()
+    @Volatile private var fingerprintMap = java.util.concurrent.ConcurrentHashMap<String, Long>()
 
     // ── Real notification path ────────────────────────────────────────────────
 
@@ -218,40 +219,45 @@ object NotificationProcessor {
             return
         }
 
-        if (isDuplicate(payment)) {
-            if (BuildConfig.DEBUG) {
-                Log.d(TAG, "DUPLICATE pkg=$packageName id=$notificationId")
+        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+            if (isDuplicate(payment)) {
+                if (BuildConfig.DEBUG) {
+                    Log.d(TAG, "DUPLICATE pkg=$packageName id=$notificationId")
+                }
+                return@launch
             }
-            return
-        }
 
-        if (BuildConfig.DEBUG) {
-            Log.d(TAG, "ACCEPTED pkg=$packageName id=$notificationId " +
-                "amt=${payment.amount} merchant=${payment.merchantOrRecipient} source=${payment.sourceApplication}")
-        }
-
-        try {
-            TransactionRepository.addTransaction(convertToTransaction(payment))
             if (BuildConfig.DEBUG) {
-                Log.d(TAG, "INSERTED pkg=$packageName id=$notificationId txnId=${payment.id}")
+                Log.d(TAG, "ACCEPTED pkg=$packageName id=$notificationId " +
+                    "amt=${payment.amount} merchant=${payment.merchantOrRecipient} source=${payment.sourceApplication}")
             }
-        } catch (e: Exception) {
-            if (BuildConfig.DEBUG) {
-                Log.e(TAG, "INSERT_FAILED pkg=$packageName id=$notificationId", e)
+
+            try {
+                TransactionRepository.addTransactionEntity(convertToTransactionEntity(payment))
+                if (BuildConfig.DEBUG) {
+                    Log.d(TAG, "INSERTED pkg=$packageName id=$notificationId txnId=${payment.id}")
+                }
+            } catch (e: Exception) {
+                if (BuildConfig.DEBUG) {
+                    Log.e(TAG, "INSERT_FAILED pkg=$packageName id=$notificationId", e)
+                }
             }
         }
     }
 
-    @Synchronized
-    private fun isDuplicate(payment: ParsedPayment): Boolean {
+    private suspend fun isDuplicate(payment: ParsedPayment): Boolean {
         val now = System.currentTimeMillis()
 
         // Tier 1 – bank reference number
-        if (!payment.bankRefNumber.isNullOrBlank()) {
-            val refKey = "ref|${payment.bankRefNumber}"
-            val lastSeen = fingerprintMap[refKey]
+        val fingerprint1 = if (!payment.bankRefNumber.isNullOrBlank()) {
+            "ref|${payment.bankRefNumber}"
+        } else null
+
+        if (fingerprint1 != null) {
+            val lastSeen = fingerprintMap[fingerprint1]
             if (lastSeen != null && (now - lastSeen) < DEDUP_WINDOW_MS) return true
-            fingerprintMap[refKey] = now
+            fingerprintMap[fingerprint1] = now
+            if (TransactionRepository.existsByFingerprint(fingerprint1)) return true
         }
 
         // Tier 2 – normalized amount + recipient + bank
@@ -259,9 +265,12 @@ object NotificationProcessor {
         val bank = KnownBanks.detect(payment.sourceApplication)?.shortName
             ?: payment.sourcePackage.take(8)
         val tier2Key = "t2|${payment.amount}|$normalizedRecipient|$bank"
+        
         val lastSeen2 = fingerprintMap[tier2Key]
         if (lastSeen2 != null && (now - lastSeen2) < DEDUP_WINDOW_MS) return true
         fingerprintMap[tier2Key] = now
+        
+        if (TransactionRepository.existsByFingerprint(tier2Key)) return true
 
         // Prune expired entries
         fingerprintMap.entries.removeIf { (_, v) -> (now - v) > DEDUP_WINDOW_MS }
@@ -269,7 +278,17 @@ object NotificationProcessor {
         return false
     }
 
-    private fun convertToTransaction(payment: ParsedPayment): Transaction {
+    private fun getPrimaryFingerprint(payment: ParsedPayment): String {
+        if (!payment.bankRefNumber.isNullOrBlank()) {
+            return "ref|${payment.bankRefNumber}"
+        }
+        val normalizedRecipient = payment.merchantOrRecipient.lowercase().replace(Regex("\\s+"), "")
+        val bank = KnownBanks.detect(payment.sourceApplication)?.shortName
+            ?: payment.sourcePackage.take(8)
+        return "t2|${payment.amount}|$normalizedRecipient|$bank"
+    }
+
+    private fun convertToTransactionEntity(payment: ParsedPayment): com.autoexpense.app.data.TransactionEntity {
         val source = SupportedPaymentSources.findSource(payment.sourcePackage)
             ?.takeIf { !it.isMessaging }
             ?.shortName
@@ -282,20 +301,22 @@ object NotificationProcessor {
             "−₹${String.format(java.util.Locale.US, "%,.2f", payment.amount)}"
         }
 
-        val dateStr = java.text.SimpleDateFormat("d MMM, h:mm a", java.util.Locale.US)
-            .format(java.util.Date(payment.timestamp))
-
-        return Transaction(
+        return com.autoexpense.app.data.TransactionEntity(
             id = payment.id,
-            merchant = payment.merchantOrRecipient,
+            merchantOrRecipient = payment.merchantOrRecipient,
             sub = payment.sourceApplication,
+            amount = amountStr,
+            currency = "INR",
             source = source,
             category = "❓ Unknown",
-            amount = amountStr,
-            date = dateStr,
             status = "review",
-            notificationExcerpt = payment.safeNotificationExcerpt,
-            detectionReason = payment.detectionReason
+            timestamp = payment.timestamp,
+            confidence = 1.0f,
+            detectionReason = payment.detectionReason,
+            safeNotificationExcerpt = payment.safeNotificationExcerpt,
+            transactionFingerprint = getPrimaryFingerprint(payment),
+            createdAt = System.currentTimeMillis(),
+            updatedAt = System.currentTimeMillis()
         )
     }
 }
