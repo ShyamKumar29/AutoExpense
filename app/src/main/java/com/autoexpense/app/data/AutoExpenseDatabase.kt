@@ -8,8 +8,8 @@ import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
-    entities = [TransactionEntity::class, BudgetEntity::class, CustomCategoryEntity::class, MerchantCategoryMappingEntity::class],
-    version = 4,
+    entities = [TransactionEntity::class, BudgetEntity::class, CustomCategoryEntity::class, MerchantCategoryMappingEntity::class, MerchantAliasEntity::class],
+    version = 5,
     exportSchema = false
 )
 abstract class AutoExpenseDatabase : RoomDatabase() {
@@ -17,6 +17,7 @@ abstract class AutoExpenseDatabase : RoomDatabase() {
     abstract fun budgetDao(): BudgetDao
     abstract fun customCategoryDao(): CustomCategoryDao
     abstract fun merchantCategoryDao(): MerchantCategoryDao
+    abstract fun merchantAliasDao(): MerchantAliasDao
 
     companion object {
         @Volatile
@@ -79,6 +80,23 @@ abstract class AutoExpenseDatabase : RoomDatabase() {
             }
         }
 
+        /** Non-destructive migration: adds rawMerchant column to transactions and creates merchant_aliases table in version 5. */
+        private val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL("ALTER TABLE `transactions` ADD COLUMN `rawMerchant` TEXT NOT NULL DEFAULT ''")
+                database.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `merchant_aliases` (
+                        `normalizedRawMerchant` TEXT NOT NULL PRIMARY KEY,
+                        `rawMerchant` TEXT NOT NULL,
+                        `displayName` TEXT NOT NULL,
+                        `updatedAt` INTEGER NOT NULL
+                    )
+                    """.trimIndent()
+                )
+            }
+        }
+
         fun getDatabase(context: Context): AutoExpenseDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -86,7 +104,7 @@ abstract class AutoExpenseDatabase : RoomDatabase() {
                     AutoExpenseDatabase::class.java,
                     "autoexpense_database"
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
                     .build()
                 INSTANCE = instance
                 instance

@@ -14,6 +14,7 @@ class AutoExpenseApplication : Application() {
         BudgetRepositorySingleton.init(BudgetRepository(db.budgetDao()))
         com.autoexpense.app.data.CustomCategoryRepository.init(db.customCategoryDao())
         com.autoexpense.app.data.MerchantCategoryRepository.init(db.merchantCategoryDao())
+        com.autoexpense.app.data.MerchantAliasRepository.init(db.merchantAliasDao())
         BudgetNotificationHelper.createChannel(this)
     }
 }

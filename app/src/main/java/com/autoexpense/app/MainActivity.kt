@@ -152,7 +152,8 @@ data class Transaction(
     val notificationExcerpt: String = "",
     val detectionReason: String = "",
     val timestamp: Long = 0L,
-    var note: String = ""
+    var note: String = "",
+    val rawMerchant: String = ""
 )
 
 // ── TRANSACTION REPOSITORY (Single Source of Truth) ─────────────────────────
@@ -2793,6 +2794,10 @@ fun ReceiptsLedgerScreen(
     var showRememberPrompt by remember { mutableStateOf(false) }
     var rememberMerchant by remember { mutableStateOf("") }
     var rememberCategory by remember { mutableStateOf("") }
+    var showRememberAliasPrompt by remember { mutableStateOf(false) }
+    var rememberAliasRawMerchant by remember { mutableStateOf("") }
+    var rememberAliasDisplayName by remember { mutableStateOf("") }
+    var pendingRememberCategoryPrompt by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
     Column(
@@ -3092,11 +3097,26 @@ fun ReceiptsLedgerScreen(
             onClose = { showEditSheet = false },
             onSave = { newMerchant, newCategory, newNote ->
                 val origCat = selectedTransaction!!.category
+                val origMerchant = selectedTransaction!!.merchant
+                val origRawMerchant = if (selectedTransaction!!.rawMerchant.isNotBlank()) selectedTransaction!!.rawMerchant else origMerchant
                 val id = selectedTransaction!!.id
                 TransactionRepository.updateTransaction(id, newMerchant, newCategory, newNote, updateMemory = false)
                 selectedTransaction = selectedTransaction!!.copy(merchant = newMerchant, category = newCategory, note = newNote)
                 showEditSheet = false
-                if (!com.autoexpense.app.ui.cleanCategoryName(newCategory).equals(com.autoexpense.app.ui.cleanCategoryName(origCat), ignoreCase = true)) {
+
+                val merchantChanged = !newMerchant.trim().equals(origMerchant.trim(), ignoreCase = true)
+                val categoryChanged = !com.autoexpense.app.ui.cleanCategoryName(newCategory).equals(com.autoexpense.app.ui.cleanCategoryName(origCat), ignoreCase = true)
+
+                if (merchantChanged) {
+                    rememberAliasRawMerchant = origRawMerchant
+                    rememberAliasDisplayName = newMerchant.trim()
+                    pendingRememberCategoryPrompt = categoryChanged
+                    if (categoryChanged) {
+                        rememberMerchant = newMerchant
+                        rememberCategory = newCategory
+                    }
+                    showRememberAliasPrompt = true
+                } else if (categoryChanged) {
                     rememberMerchant = newMerchant
                     rememberCategory = newCategory
                     showRememberPrompt = true
@@ -3157,6 +3177,51 @@ fun ReceiptsLedgerScreen(
             },
             dismissButton = {
                 TextButton(onClick = { showRememberPrompt = false }) {
+                    Text("Not now", color = ColorText2)
+                }
+            }
+        )
+    }
+
+    if (showRememberAliasPrompt) {
+        AlertDialog(
+            onDismissRequest = {
+                showRememberAliasPrompt = false
+                if (pendingRememberCategoryPrompt) {
+                    showRememberPrompt = true
+                    pendingRememberCategoryPrompt = false
+                }
+            },
+            containerColor = ColorBg1,
+            titleContentColor = ColorText1,
+            textContentColor = ColorText2,
+            title = { Text("Remember Merchant Name?", fontWeight = FontWeight.Bold) },
+            text = { Text("Use this name for future payments from this merchant?") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        scope.launch {
+                            com.autoexpense.app.data.MerchantAliasRepository.saveAlias(rememberAliasRawMerchant, rememberAliasDisplayName)
+                        }
+                        showRememberAliasPrompt = false
+                        if (pendingRememberCategoryPrompt) {
+                            showRememberPrompt = true
+                            pendingRememberCategoryPrompt = false
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = ColorOrange, contentColor = Color.White)
+                ) {
+                    Text("Remember")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    showRememberAliasPrompt = false
+                    if (pendingRememberCategoryPrompt) {
+                        showRememberPrompt = true
+                        pendingRememberCategoryPrompt = false
+                    }
+                }) {
                     Text("Not now", color = ColorText2)
                 }
             }
@@ -3563,14 +3628,17 @@ fun ReviewCard(
 ) {
     var noteText by remember { mutableStateOf("") }
     var selectedCategory by remember { mutableStateOf("") }
+    var userManuallySelectedCategory by remember(txn.id) { mutableStateOf(false) }
     var isConfirming by remember { mutableStateOf(false) }
     var showCreateDialog by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
     val mappings by com.autoexpense.app.data.MerchantCategoryRepository.mappings.collectAsState()
     val allTxns by TransactionRepository.transactions.collectAsState()
-    val rememberedCategory = remember(txn.merchant, mappings, allTxns) {
-        com.autoexpense.app.data.MerchantCategoryRepository.getRememberedCategory(txn.merchant, allTxns)
+    val rememberedCategory = remember(txn.merchant, txn.rawMerchant, mappings, allTxns) {
+        val key = if (txn.rawMerchant.isNotBlank()) txn.rawMerchant else txn.merchant
+        com.autoexpense.app.data.MerchantCategoryRepository.getRememberedCategory(key, allTxns)
+            ?: if (txn.merchant != key) com.autoexpense.app.data.MerchantCategoryRepository.getRememberedCategory(txn.merchant, allTxns) else null
     }
 
     Card(
@@ -3704,28 +3772,15 @@ fun ReviewCard(
 
             // Pre-select remembered category, or AI suggestion if ready
             LaunchedEffect(rememberedCategory, suggestedChipId) {
-                if (rememberedCategory != null) {
-                    selectedCategory = rememberedCategory
-                } else if (selectedCategory.isEmpty()) {
-                    val matchingChip = chips.find { it.second == suggestedChipId }
-                    if (matchingChip != null) {
-                        selectedCategory = matchingChip.first
+                if (!userManuallySelectedCategory) {
+                    if (rememberedCategory != null) {
+                        selectedCategory = rememberedCategory
+                    } else if (selectedCategory.isEmpty()) {
+                        val matchingChip = chips.find { it.second == suggestedChipId }
+                        if (matchingChip != null) {
+                            selectedCategory = matchingChip.first
+                        }
                     }
-                }
-            }
-
-            if (rememberedCategory != null) {
-                Row(
-                    modifier = Modifier
-                        .padding(bottom = 8.dp)
-                        .clip(RoundedCornerShape(6.dp))
-                        .background(ColorOrange.copy(alpha = 0.15f))
-                        .padding(horizontal = 8.dp, vertical = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(Icons.Outlined.BookmarkBorder, contentDescription = null, tint = ColorOrange, modifier = Modifier.size(12.dp))
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text("Remembered category", fontSize = 11.sp, color = ColorOrange, fontWeight = FontWeight.Bold)
                 }
             }
 
@@ -3740,7 +3795,10 @@ fun ReviewCard(
                         modifier = Modifier
                             .clip(RoundedCornerShape(8.dp))
                             .background(if (isSelected) ColorOrange else ColorBg3)
-                            .clickable { selectedCategory = chip.first }
+                            .clickable {
+                                selectedCategory = chip.first
+                                userManuallySelectedCategory = true
+                            }
                             .padding(horizontal = 10.dp, vertical = 6.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
@@ -3781,6 +3839,25 @@ fun ReviewCard(
                         fontSize = 11.sp,
                         color = ColorOrange,
                         fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+
+            val showRememberedIndicator = rememberedCategory != null &&
+                !userManuallySelectedCategory &&
+                selectedCategory == rememberedCategory &&
+                !com.autoexpense.app.data.MerchantCategoryRepository.isUnknownMerchant(txn.merchant) &&
+                !com.autoexpense.app.data.MerchantCategoryRepository.isUnknownMerchant(txn.rawMerchant)
+
+            if (showRememberedIndicator) {
+                Row(
+                    modifier = Modifier.padding(top = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "✓ $rememberedCategory selected from previous choice",
+                        fontSize = 11.sp,
+                        color = ColorGreen
                     )
                 }
             }

@@ -116,20 +116,20 @@ object PaymentNotificationParser {
 
     // UPI pattern A: "to X was/is/has" – lazy stop before auxiliary verb
     private val MERCHANT_TO_WAS = Regex(
-        """to\s+([A-Za-z][A-Za-z\s]{0,39}?)\s+(?:was|is|has)\b""",
+        """to\s+([A-Za-z0-9][A-Za-z0-9\s.\-_@]{0,49}?)\s+(?:was|is|has)\b""",
         RegexOption.IGNORE_CASE
     )
 
     // UPI pattern B: "to X" at end-of-string
     private val MERCHANT_TO_END = Regex(
-        """to\s+([A-Za-z][A-Za-z\s]{0,39})\s*$""",
+        """to\s+([A-Za-z0-9][A-Za-z0-9\s.\-_@]{0,49})\s*$""",
         RegexOption.IGNORE_CASE
     )
 
     // Bank SMS: "trf to NAME" or "transferred to NAME", stopping before stop-words/ref-numbers.
     // Uses positive lookahead so the stop-word is not consumed and not included in capture.
     private val BANK_TRF_RECIPIENT = Regex(
-        """(?:trf|transfer(?:red)?)\s+to\s+([A-Za-z][A-Za-z\s]{0,38}?)""" +
+        """(?:trf|transfer(?:red)?)\s+to\s+([A-Za-z0-9][A-Za-z0-9\s.\-_@]{0,49}?)""" +
         """(?=\s*(?:refno|ref\s*no|reference|utr|upi\s*ref|txn\s*id|transaction\s*id""" +
         """|on\s+date|if\s+not|call\b|for\b)|\s*\d{6,}|\s*$)""",
         RegexOption.IGNORE_CASE
@@ -330,7 +330,7 @@ object PaymentNotificationParser {
     }
 
     private fun isValidMerchantName(name: String): Boolean {
-        if (name.isBlank() || name.length > 40) return false
+        if (name.isBlank() || name.length > 50) return false
         return name.lowercase().trim() !in INVALID_MERCHANT_TOKENS
     }
 

@@ -25,7 +25,8 @@ data class TransactionEntity(
     val safeNotificationExcerpt: String,
     val transactionFingerprint: String,
     val createdAt: Long,
-    val updatedAt: Long
+    val updatedAt: Long,
+    val rawMerchant: String = ""
 ) {
     fun toTransaction(): Transaction {
         val dateStr = SimpleDateFormat("d MMM, h:mm a", Locale.US).format(Date(timestamp))
@@ -42,7 +43,8 @@ data class TransactionEntity(
             notificationExcerpt = safeNotificationExcerpt,
             detectionReason = detectionReason,
             timestamp = timestamp,
-            note = note
+            note = note,
+            rawMerchant = if (rawMerchant.isNotBlank()) rawMerchant else merchantOrRecipient
         )
     }
 }

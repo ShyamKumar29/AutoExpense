@@ -305,9 +305,12 @@ object NotificationProcessor {
             "−₹${String.format(java.util.Locale.US, "%,.2f", payment.amount)}"
         }
 
+        val rawMerchant = payment.merchantOrRecipient
+        val cleanedMerchant = SmartMerchantCleaner.cleanMerchant(rawMerchant)
+
         return com.autoexpense.app.data.TransactionEntity(
             id = payment.id,
-            merchantOrRecipient = payment.merchantOrRecipient,
+            merchantOrRecipient = cleanedMerchant,
             sub = payment.sourceApplication,
             amount = amountStr,
             currency = "INR",
@@ -320,7 +323,8 @@ object NotificationProcessor {
             safeNotificationExcerpt = payment.safeNotificationExcerpt,
             transactionFingerprint = getPrimaryFingerprint(payment),
             createdAt = System.currentTimeMillis(),
-            updatedAt = System.currentTimeMillis()
+            updatedAt = System.currentTimeMillis(),
+            rawMerchant = rawMerchant
         )
     }
 }
