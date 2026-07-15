@@ -17,6 +17,7 @@ import androidx.compose.material.icons.outlined.FileDownload
 import androidx.compose.material.icons.outlined.NotificationsActive
 import androidx.compose.material.icons.outlined.Palette
 import androidx.compose.material.icons.outlined.PrivacyTip
+import androidx.compose.material.icons.outlined.Save
 import androidx.compose.material.icons.outlined.Security
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material.icons.outlined.Vibration
@@ -49,6 +50,7 @@ fun SettingsScreen(
     onNavigateBack: () -> Unit,
     onOpenPaymentSetup: () -> Unit,
     onOpenExport: () -> Unit,
+    onOpenBackupRestore: () -> Unit = {},
     onDataCleared: () -> Unit
 ) {
     val context = LocalContext.current
@@ -380,6 +382,30 @@ fun SettingsScreen(
                         Spacer(modifier = Modifier.width(10.dp))
                         Text(
                             "Export Transactions",
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = ColorText1,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Icon(Icons.Outlined.ArrowForwardIos, contentDescription = null, tint = ColorText2, modifier = Modifier.size(14.dp))
+                    }
+
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp), color = ColorBg3)
+
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                AppHaptic.trigger(context)
+                                onOpenBackupRestore()
+                            }
+                            .padding(vertical = 4.dp)
+                    ) {
+                        Icon(Icons.Outlined.Save, contentDescription = null, tint = ColorOrange, modifier = Modifier.size(20.dp))
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Text(
+                            "Backup & Restore",
                             fontSize = 14.sp,
                             fontWeight = FontWeight.SemiBold,
                             color = ColorText1,

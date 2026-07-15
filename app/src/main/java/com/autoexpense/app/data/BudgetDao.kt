@@ -58,6 +58,15 @@ interface BudgetDao {
      * Sum of confirmed outgoing transactions for a specific category
      * within [startMs, endMs].
      */
+    @Query("SELECT * FROM budgets ORDER BY periodType ASC, categoryKey ASC")
+    suspend fun getAllBudgets(): List<BudgetEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAll(budgets: List<BudgetEntity>)
+
+    @Query("DELETE FROM budgets")
+    suspend fun deleteAll()
+
     @Query("""
         SELECT COALESCE(SUM(
             CAST(REPLACE(REPLACE(REPLACE(amount, '−₹', ''), ',', ''), ' ', '') AS REAL)

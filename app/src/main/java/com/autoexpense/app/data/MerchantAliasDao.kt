@@ -17,6 +17,12 @@ interface MerchantAliasDao {
     @Query("SELECT * FROM merchant_aliases ORDER BY updatedAt DESC")
     suspend fun getAllAliases(): List<MerchantAliasEntity>
 
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAll(aliases: List<MerchantAliasEntity>)
+
+    @Query("DELETE FROM merchant_aliases")
+    suspend fun deleteAll()
+
     @Query("SELECT * FROM merchant_aliases WHERE normalizedRawMerchant = :normalized")
     suspend fun getByNormalizedMerchant(normalized: String): MerchantAliasEntity?
 }

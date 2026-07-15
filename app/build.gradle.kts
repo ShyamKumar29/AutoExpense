@@ -58,6 +58,7 @@ dependencies {
     debugImplementation(libs.androidx.ui.tooling)
     debugImplementation(libs.androidx.ui.test.manifest)
     testImplementation(libs.junit)
+    testImplementation("org.json:json:20240303")
 
     implementation(libs.androidx.room.runtime)
     implementation(libs.androidx.room.ktx)

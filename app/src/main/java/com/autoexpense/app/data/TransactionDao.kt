@@ -38,6 +38,15 @@ interface TransactionDao {
     @Query("UPDATE transactions SET merchantOrRecipient = :merchant, category = :category, note = :note, updatedAt = :updatedAt WHERE id = :id")
     suspend fun updateTransactionDetails(id: String, merchant: String, category: String, note: String, updatedAt: Long = System.currentTimeMillis())
 
+    @Query("SELECT * FROM transactions ORDER BY timestamp DESC")
+    suspend fun getAllTransactions(): List<TransactionEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAll(transactions: List<TransactionEntity>)
+
+    @Query("DELETE FROM transactions")
+    suspend fun deleteAll()
+
     @Query("DELETE FROM transactions WHERE id = :id")
     suspend fun deleteTransactionById(id: String)
 }

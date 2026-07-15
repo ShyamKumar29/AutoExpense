@@ -16,4 +16,10 @@ interface CustomCategoryDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(category: CustomCategoryEntity): Long
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAll(categories: List<CustomCategoryEntity>)
+
+    @Query("DELETE FROM custom_categories")
+    suspend fun deleteAll()
 }

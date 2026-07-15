@@ -271,6 +271,16 @@ class BudgetTest {
 
         override fun observeAll(): Flow<List<BudgetEntity>> = budgets
 
+        override suspend fun getAllBudgets(): List<BudgetEntity> = budgets.value
+
+        override suspend fun insertAll(budgetsList: List<BudgetEntity>) {
+            budgets.value = budgetsList
+        }
+
+        override suspend fun deleteAll() {
+            budgets.value = emptyList()
+        }
+
         fun observeAllSync(): List<BudgetEntity> = budgets.value
 
         override suspend fun getById(id: Long): BudgetEntity? {

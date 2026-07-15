@@ -1035,6 +1035,7 @@ fun MainAppContainer(
                                 onNavigateBack = { activeScreen = settingsReturnScreen },
                                 onOpenPaymentSetup = { activeScreen = "payment_setup" },
                                 onOpenExport = { activeScreen = "export" },
+                                onOpenBackupRestore = { activeScreen = "backup_restore" },
                                 onDataCleared = {
                                     setupCardDismissed = false
                                     activeScreen = "dashboard"
@@ -1055,6 +1056,12 @@ fun MainAppContainer(
                         "export" -> com.autoexpense.app.export.ExportScreen(
                             viewModel = exportViewModel,
                             onBackToDashboard = { activeScreen = "dashboard" }
+                        )
+                        "backup_restore" -> com.autoexpense.app.ui.BackupRestoreScreen(
+                            onNavigateBack = { activeScreen = "settings" },
+                            onRestoreCompleted = {
+                                (context as? android.app.Activity)?.recreate()
+                            }
                         )
                     }
                 }
