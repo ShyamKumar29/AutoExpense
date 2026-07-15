@@ -1,5 +1,6 @@
 package com.autoexpense.app.notification
 
+import android.os.Build
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import android.util.Log
@@ -20,6 +21,26 @@ class AutoExpenseNotificationListener : NotificationListenerService() {
 
     private val serviceScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
 
+    override fun onListenerConnected() {
+        super.onListenerConnected()
+        if (BuildConfig.DEBUG) {
+            Log.d(TAG, "onListenerConnected")
+        }
+        serviceScope.launch {
+            NotificationHealthRepository.recordServiceConnected(applicationContext)
+        }
+    }
+
+    override fun onListenerDisconnected() {
+        super.onListenerDisconnected()
+        if (BuildConfig.DEBUG) {
+            Log.d(TAG, "onListenerDisconnected")
+        }
+        serviceScope.launch {
+            NotificationHealthRepository.recordServiceDisconnected(applicationContext)
+        }
+    }
+
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
         if (sbn == null) {
             if (BuildConfig.DEBUG) {
@@ -30,8 +51,32 @@ class AutoExpenseNotificationListener : NotificationListenerService() {
         if (BuildConfig.DEBUG) {
             Log.d(TAG, "onNotificationPosted pkg=${sbn.packageName}")
         }
+
+        if (sbn.id == NotificationHealthRepository.TEST_NOTIFICATION_ID && sbn.packageName == applicationContext.packageName) {
+            if (BuildConfig.DEBUG) {
+                Log.d(TAG, "onNotificationPosted: test notification detected")
+            }
+            NotificationHealthRepository.recordNotificationHeartbeat(applicationContext)
+            NotificationHealthRepository.onTestNotificationDetected()
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                    cancelNotification(sbn.key)
+                } else {
+                    @Suppress("DEPRECATION")
+                    cancelNotification(sbn.packageName, sbn.tag, sbn.id)
+                }
+            } catch (_: Exception) {
+                try {
+                    val nm = applicationContext.getSystemService(android.content.Context.NOTIFICATION_SERVICE) as? android.app.NotificationManager
+                    nm?.cancel(NotificationHealthRepository.TEST_NOTIFICATION_ID)
+                } catch (_: Exception) {}
+            }
+            return
+        }
+
         serviceScope.launch {
-            NotificationProcessor.process(sbn)
+            NotificationHealthRepository.recordNotificationHeartbeat(applicationContext)
+            NotificationProcessor.process(sbn, applicationContext)
         }
     }
 

@@ -13,6 +13,7 @@ class AutoExpenseApplication : Application() {
         val db = AutoExpenseDatabase.getDatabase(this)
         BudgetRepositorySingleton.init(BudgetRepository(db.budgetDao()))
         com.autoexpense.app.data.CustomCategoryRepository.init(db.customCategoryDao())
+        com.autoexpense.app.data.MerchantCategoryRepository.init(db.merchantCategoryDao())
         BudgetNotificationHelper.createChannel(this)
     }
 }

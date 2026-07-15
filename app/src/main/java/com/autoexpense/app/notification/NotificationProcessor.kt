@@ -41,7 +41,7 @@ object NotificationProcessor {
 
     // ── Real notification path ────────────────────────────────────────────────
 
-    fun process(sbn: StatusBarNotification) {
+    fun process(sbn: StatusBarNotification, context: android.content.Context? = null) {
         val packageName = sbn.packageName
         if (packageName.isNullOrBlank()) {
             if (BuildConfig.DEBUG) Log.d(TAG, "DROPPED reason=null_or_blank_package")
@@ -180,14 +180,14 @@ object NotificationProcessor {
         }
 
         for (body in bodies) {
-            processRawNotification(title, body, packageName, sbn.postTime, id)
+            processRawNotification(title, body, packageName, sbn.postTime, id, context)
         }
     }
 
     // ── Debug / test path ─────────────────────────────────────────────────────
 
-    fun simulateNotification(title: String, body: String, packageName: String) {
-        processRawNotification(title, body, packageName, System.currentTimeMillis(), 999)
+    fun simulateNotification(title: String, body: String, packageName: String, context: android.content.Context? = null) {
+        processRawNotification(title, body, packageName, System.currentTimeMillis(), 999, context)
     }
 
     // ── Shared logic ──────────────────────────────────────────────────────────
@@ -197,7 +197,8 @@ object NotificationProcessor {
         body: String,
         packageName: String,
         timestamp: Long,
-        notificationId: Int
+        notificationId: Int,
+        context: android.content.Context? = null
     ) {
         if (BuildConfig.DEBUG) {
             Log.d(TAG, "PARSER_REACHED pkg=$packageName id=$notificationId " +
@@ -236,6 +237,9 @@ object NotificationProcessor {
                 TransactionRepository.addTransactionEntity(convertToTransactionEntity(payment))
                 if (BuildConfig.DEBUG) {
                     Log.d(TAG, "INSERTED pkg=$packageName id=$notificationId txnId=${payment.id}")
+                }
+                if (context != null) {
+                    NotificationHealthRepository.recordPaymentDetected(context, payment.timestamp)
                 }
             } catch (e: Exception) {
                 if (BuildConfig.DEBUG) {

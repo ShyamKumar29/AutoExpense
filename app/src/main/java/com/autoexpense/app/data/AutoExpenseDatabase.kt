@@ -8,14 +8,15 @@ import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
-    entities = [TransactionEntity::class, BudgetEntity::class, CustomCategoryEntity::class],
-    version = 3,
+    entities = [TransactionEntity::class, BudgetEntity::class, CustomCategoryEntity::class, MerchantCategoryMappingEntity::class],
+    version = 4,
     exportSchema = false
 )
 abstract class AutoExpenseDatabase : RoomDatabase() {
     abstract fun transactionDao(): TransactionDao
     abstract fun budgetDao(): BudgetDao
     abstract fun customCategoryDao(): CustomCategoryDao
+    abstract fun merchantCategoryDao(): MerchantCategoryDao
 
     companion object {
         @Volatile
@@ -62,6 +63,22 @@ abstract class AutoExpenseDatabase : RoomDatabase() {
             }
         }
 
+        /** Non-destructive migration: adds the merchant_category_mappings table introduced in version 4. */
+        private val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `merchant_category_mappings` (
+                        `normalizedMerchant` TEXT NOT NULL PRIMARY KEY,
+                        `merchantName` TEXT NOT NULL,
+                        `category` TEXT NOT NULL,
+                        `updatedAt` INTEGER NOT NULL
+                    )
+                    """.trimIndent()
+                )
+            }
+        }
+
         fun getDatabase(context: Context): AutoExpenseDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -69,7 +86,7 @@ abstract class AutoExpenseDatabase : RoomDatabase() {
                     AutoExpenseDatabase::class.java,
                     "autoexpense_database"
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
                     .build()
                 INSTANCE = instance
                 instance

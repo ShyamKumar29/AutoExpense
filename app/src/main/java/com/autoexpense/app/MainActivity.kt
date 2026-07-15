@@ -1,4 +1,4 @@
-@file:OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@file:OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class, androidx.compose.material3.ExperimentalMaterial3Api::class)
 
 package com.autoexpense.app
 
@@ -9,15 +9,19 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.*
+import androidx.compose.foundation.lazy.*
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
@@ -34,6 +38,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -67,8 +72,11 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.SharingStarted
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 
 import android.content.Context
 import android.provider.Settings
@@ -143,7 +151,8 @@ data class Transaction(
     // Phase 2: populated only for notification-detected transactions.
     val notificationExcerpt: String = "",
     val detectionReason: String = "",
-    val timestamp: Long = 0L
+    val timestamp: Long = 0L,
+    var note: String = ""
 )
 
 // ── TRANSACTION REPOSITORY (Single Source of Truth) ─────────────────────────
@@ -169,7 +178,36 @@ object TransactionRepository {
 
     fun confirmTransaction(id: String, category: String, onComplete: (() -> Unit)? = null) {
         coroutineScope.launch {
+            val target = _transactions.value.find { it.id == id }
+            if (target != null) {
+                com.autoexpense.app.data.MerchantCategoryRepository.saveMapping(target.merchant, category)
+            }
             dao.confirmTransaction(id, category)
+            onComplete?.invoke()
+        }
+    }
+
+    fun updateTransaction(
+        id: String,
+        merchantName: String,
+        category: String,
+        note: String,
+        updateMemory: Boolean = false,
+        onComplete: (() -> Unit)? = null
+    ) {
+        coroutineScope.launch {
+            val target = _transactions.value.find { it.id == id }
+            if (target != null && updateMemory) {
+                com.autoexpense.app.data.MerchantCategoryRepository.saveMapping(merchantName, category)
+            }
+            dao.updateTransactionDetails(id, merchantName, category, note)
+            onComplete?.invoke()
+        }
+    }
+
+    fun deleteTransaction(id: String, onComplete: (() -> Unit)? = null) {
+        coroutineScope.launch {
+            dao.deleteTransactionById(id)
             onComplete?.invoke()
         }
     }
@@ -200,6 +238,7 @@ object TransactionRepository {
             _transactions.value.forEach {
                 if (it.status == "review") {
                     val cat = suggestions[it.id] ?: "Personal Transfer"
+                    com.autoexpense.app.data.MerchantCategoryRepository.saveMapping(it.merchant, cat)
                     dao.confirmTransaction(it.id, cat)
                 }
             }
@@ -490,10 +529,205 @@ class DashboardViewModel : ViewModel() {
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
 }
 
+data class DateFilter(val startMs: Long, val endMs: Long, val label: String)
+
+enum class SortOption(val label: String) {
+    NEWEST_FIRST("Newest first"),
+    OLDEST_FIRST("Oldest first"),
+    HIGHEST_AMOUNT("Highest amount"),
+    LOWEST_AMOUNT("Lowest amount"),
+    MERCHANT_AZ("Merchant name A–Z"),
+    MERCHANT_ZA("Merchant name Z–A")
+}
+
+enum class CategoryFilterOption {
+    ALL, BUILT_IN, USER_CREATED
+}
+
+data class ReceiptsFilterSettings(
+    val searchQuery: String = "",
+    val dateFilter: DateFilter? = null,
+    val categoryFilter: CategoryFilterOption = CategoryFilterOption.ALL,
+    val sourceFilter: String? = null,
+    val minAmount: Double? = null,
+    val maxAmount: Double? = null,
+    val sortOption: SortOption = SortOption.NEWEST_FIRST
+) {
+    fun hasActiveSearchOrFilters(): Boolean {
+        return searchQuery.trim().isNotEmpty() ||
+                dateFilter != null ||
+                categoryFilter != CategoryFilterOption.ALL ||
+                !sourceFilter.isNullOrEmpty() ||
+                minAmount != null ||
+                maxAmount != null
+    }
+
+    fun activeFilterCount(): Int {
+        var count = 0
+        if (dateFilter != null) count++
+        if (categoryFilter != CategoryFilterOption.ALL) count++
+        if (!sourceFilter.isNullOrEmpty()) count++
+        if (minAmount != null || maxAmount != null) count++
+        return count
+    }
+}
+
 class ReceiptsViewModel : ViewModel() {
-    val confirmedTransactions: StateFlow<List<Transaction>> = TransactionRepository.transactions.map { list ->
-        list.filter { it.status == "confirmed" }
+    private val _filterSettings = MutableStateFlow(ReceiptsFilterSettings())
+    val filterSettings: StateFlow<ReceiptsFilterSettings> = _filterSettings.asStateFlow()
+
+    val dateFilter: StateFlow<DateFilter?> = _filterSettings.map { it.dateFilter }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+
+    fun setSearchQuery(query: String) {
+        _filterSettings.value = _filterSettings.value.copy(searchQuery = query)
+    }
+
+    fun setDateFilter(startMs: Long, endMs: Long, label: String) {
+        _filterSettings.value = _filterSettings.value.copy(dateFilter = DateFilter(startMs, endMs, label))
+    }
+
+    fun clearDateFilter() {
+        _filterSettings.value = _filterSettings.value.copy(dateFilter = null)
+    }
+
+    fun setCategoryFilter(option: CategoryFilterOption) {
+        _filterSettings.value = _filterSettings.value.copy(categoryFilter = option)
+    }
+
+    fun clearCategoryFilter() {
+        _filterSettings.value = _filterSettings.value.copy(categoryFilter = CategoryFilterOption.ALL)
+    }
+
+    fun setSourceFilter(source: String?) {
+        _filterSettings.value = _filterSettings.value.copy(sourceFilter = if (source.isNullOrBlank()) null else source)
+    }
+
+    fun clearSourceFilter() {
+        _filterSettings.value = _filterSettings.value.copy(sourceFilter = null)
+    }
+
+    fun setAmountRange(min: Double?, max: Double?) {
+        _filterSettings.value = _filterSettings.value.copy(minAmount = min, maxAmount = max)
+    }
+
+    fun clearAmountFilter() {
+        _filterSettings.value = _filterSettings.value.copy(minAmount = null, maxAmount = null)
+    }
+
+    fun setSortOption(option: SortOption) {
+        _filterSettings.value = _filterSettings.value.copy(sortOption = option)
+    }
+
+    fun resetFilters() {
+        val currentSort = _filterSettings.value.sortOption
+        _filterSettings.value = ReceiptsFilterSettings(sortOption = currentSort)
+    }
+
+    fun clearAll() {
+        _filterSettings.value = ReceiptsFilterSettings()
+    }
+
+    val confirmedTransactions: StateFlow<List<Transaction>> = combine(
+        TransactionRepository.transactions,
+        com.autoexpense.app.data.CustomCategoryRepository.customCategories,
+        _filterSettings
+    ) { allTxns, customCats, settings ->
+        val confirmed = allTxns.filter { it.status.equals("confirmed", ignoreCase = true) }
+        filterAndSortTransactions(confirmed, customCats, settings)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val dynamicSources: StateFlow<List<String>> = TransactionRepository.transactions.map { list ->
+        list.filter { it.status.equals("confirmed", ignoreCase = true) }
+            .map { it.source.trim() }
+            .filter { it.isNotEmpty() }
+            .distinct()
+            .sorted()
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    companion object {
+        fun parseAmountHelper(amountStr: String): Double {
+            val cleaned = amountStr
+                .replace("−", "")
+                .replace("-", "")
+                .replace("₹", "")
+                .replace(",", "")
+                .replace(" ", "")
+                .trim()
+            return cleaned.toDoubleOrNull() ?: 0.0
+        }
+
+        fun isBuiltInCategoryHelper(cat: String, customCategories: List<com.autoexpense.app.data.CustomCategoryEntity>): Boolean {
+            val clean = com.autoexpense.app.ui.cleanCategoryName(cat)
+            val baseCategories = listOf(
+                "Food & Dining", "Transport", "Groceries", "Shopping", "Entertainment",
+                "Healthcare", "Rent / Bills", "Travel", "Personal Transfer", "Other"
+            )
+            if (customCategories.any { com.autoexpense.app.ui.cleanCategoryName(it.name).equals(clean, ignoreCase = true) }) {
+                return false
+            }
+            return baseCategories.any { it.equals(clean, ignoreCase = true) } || customCategories.none { com.autoexpense.app.ui.cleanCategoryName(it.name).equals(clean, ignoreCase = true) }
+        }
+
+        fun filterAndSortTransactions(
+            allConfirmed: List<Transaction>,
+            customCategories: List<com.autoexpense.app.data.CustomCategoryEntity>,
+            settings: ReceiptsFilterSettings
+        ): List<Transaction> {
+            val filtered = allConfirmed.filter { t ->
+                // 1. Search query (merchant, category, note, source)
+                val q = settings.searchQuery.trim()
+                val matchesSearch = if (q.isEmpty()) {
+                    true
+                } else {
+                    t.merchant.contains(q, ignoreCase = true) ||
+                    t.category.contains(q, ignoreCase = true) ||
+                    t.note.contains(q, ignoreCase = true) ||
+                    t.source.contains(q, ignoreCase = true)
+                }
+                if (!matchesSearch) return@filter false
+
+                // 2. Date filter
+                val matchesDate = if (settings.dateFilter == null) {
+                    true
+                } else {
+                    t.timestamp in settings.dateFilter.startMs..settings.dateFilter.endMs
+                }
+                if (!matchesDate) return@filter false
+
+                // 3. Category filter
+                val matchesCategory = when (settings.categoryFilter) {
+                    CategoryFilterOption.ALL -> true
+                    CategoryFilterOption.BUILT_IN -> isBuiltInCategoryHelper(t.category, customCategories)
+                    CategoryFilterOption.USER_CREATED -> !isBuiltInCategoryHelper(t.category, customCategories)
+                }
+                if (!matchesCategory) return@filter false
+
+                // 4. Source filter
+                val matchesSource = if (settings.sourceFilter.isNullOrEmpty()) {
+                    true
+                } else {
+                    t.source.equals(settings.sourceFilter, ignoreCase = true)
+                }
+                if (!matchesSource) return@filter false
+
+                // 5. Amount range filter
+                val amt = parseAmountHelper(t.amount)
+                val matchesMin = settings.minAmount == null || amt >= settings.minAmount
+                val matchesMax = settings.maxAmount == null || amt <= settings.maxAmount
+                matchesMin && matchesMax
+            }
+
+            return when (settings.sortOption) {
+                SortOption.NEWEST_FIRST -> filtered.sortedByDescending { it.timestamp }
+                SortOption.OLDEST_FIRST -> filtered.sortedBy { it.timestamp }
+                SortOption.HIGHEST_AMOUNT -> filtered.sortedByDescending { parseAmountHelper(it.amount) }
+                SortOption.LOWEST_AMOUNT -> filtered.sortedBy { parseAmountHelper(it.amount) }
+                SortOption.MERCHANT_AZ -> filtered.sortedBy { it.merchant.trim().lowercase() }
+                SortOption.MERCHANT_ZA -> filtered.sortedByDescending { it.merchant.trim().lowercase() }
+            }
+        }
+    }
 }
 
 class ReviewViewModel : ViewModel() {
@@ -528,17 +762,63 @@ class ProfileViewModel : ViewModel() {
     private val _notificationAccessEnabled = MutableStateFlow(false)
     val notificationAccessEnabled: StateFlow<Boolean> = _notificationAccessEnabled.asStateFlow()
 
+    private val _listenerStatus = MutableStateFlow("Attention needed")
+    val listenerStatus: StateFlow<String> = _listenerStatus.asStateFlow()
+
+    private val _lastPaymentDetectedText = MutableStateFlow("No payments detected yet")
+    val lastPaymentDetectedText: StateFlow<String> = _lastPaymentDetectedText.asStateFlow()
+
+    private val _healthWarning = MutableStateFlow<String?>(null)
+    val healthWarning: StateFlow<String?> = _healthWarning.asStateFlow()
+
+    val isReconnecting: StateFlow<Boolean> = com.autoexpense.app.notification.NotificationHealthRepository.isReconnecting
+    val reconnectStatusMessage: StateFlow<String?> = com.autoexpense.app.notification.NotificationHealthRepository.reconnectStatusMessage
+    val testDetectionStatus: StateFlow<String?> = com.autoexpense.app.notification.NotificationHealthRepository.testDetectionStatus
+
+    init {
+        viewModelScope.launch {
+            combine(
+                com.autoexpense.app.notification.NotificationHealthRepository.sessionConnected,
+                com.autoexpense.app.notification.NotificationHealthRepository.isReconnecting,
+                TransactionRepository.transactions
+            ) { _, _, _ -> }.collect {
+                // Trigger updates if context is refreshed
+            }
+        }
+    }
+
     fun refreshPermissionStatus(context: Context) {
-        _notificationAccessEnabled.value = isNotificationListenerEnabled(context)
+        val repo = com.autoexpense.app.notification.NotificationHealthRepository
+        _notificationAccessEnabled.value = repo.isNotificationListenerEnabled(context)
+        _listenerStatus.value = repo.getListenerStatus(context)
+        val lastTs = repo.getLastPaymentDetectedTime(context)
+        _lastPaymentDetectedText.value = repo.formatLastPaymentTime(lastTs)
+        _healthWarning.value = repo.getHealthWarning(context)
+    }
+
+    fun checkStatus(context: Context) {
+        refreshPermissionStatus(context)
+    }
+
+    fun reconnectListener(context: Context) {
+        com.autoexpense.app.notification.NotificationHealthRepository.reconnectListener(context)
+        refreshPermissionStatus(context)
+    }
+
+    fun clearReconnectStatusMessage() {
+        com.autoexpense.app.notification.NotificationHealthRepository.clearReconnectStatusMessage()
+    }
+
+    fun runTestDetection(context: Context) {
+        com.autoexpense.app.notification.NotificationHealthRepository.runTestDetection(context)
+    }
+
+    fun clearTestDetectionStatus() {
+        com.autoexpense.app.notification.NotificationHealthRepository.clearTestDetectionStatus()
     }
 
     private fun isNotificationListenerEnabled(context: Context): Boolean {
-        val enabledListeners = Settings.Secure.getString(
-            context.contentResolver,
-            "enabled_notification_listeners"
-        ) ?: return false
-        val target = "${context.packageName}/com.autoexpense.app.notification.AutoExpenseNotificationListener"
-        return enabledListeners.contains(target)
+        return com.autoexpense.app.notification.NotificationHealthRepository.isNotificationListenerEnabled(context)
     }
 }
 
@@ -642,7 +922,11 @@ fun MainAppContainer(
                             userName = userName,
                             onProfileClick = { activeScreen = "profile" },
                             showNotificationSetupCard = showNotificationSetupCard,
-                            onDismissSetupCard = { setupCardDismissed = true }
+                            onDismissSetupCard = { setupCardDismissed = true },
+                            onNavigateToReceiptsWithFilter = { startMs, endMs, label ->
+                                receiptsViewModel.setDateFilter(startMs, endMs, label)
+                                activeScreen = "receipts"
+                            }
                         )
                         "receipts" -> ReceiptsLedgerScreen(
                             viewModel = receiptsViewModel,
@@ -775,7 +1059,8 @@ fun DashboardScreen(
     userName: String = "",
     onProfileClick: () -> Unit = {},
     showNotificationSetupCard: Boolean = false,
-    onDismissSetupCard: () -> Unit = {}
+    onDismissSetupCard: () -> Unit = {},
+    onNavigateToReceiptsWithFilter: (Long, Long, String) -> Unit = { _, _, _ -> onNavigate("receipts") }
 ) {
     var searchQuery by remember { mutableStateOf("") }
     var chartType by remember { mutableStateOf("weekly") } // "weekly" or "monthly"
@@ -830,7 +1115,9 @@ fun DashboardScreen(
             ChartCard(
                 chartData = currentChartData,
                 chartType = chartType,
-                onTypeChange = { chartType = it }
+                onTypeChange = { chartType = it },
+                transactions = transactions,
+                onNavigateToReceiptsWithFilter = onNavigateToReceiptsWithFilter
             )
 
             Spacer(modifier = Modifier.height(16.dp))
@@ -1094,11 +1381,14 @@ fun MetricCard(
 fun ChartCard(
     chartData: CashFlowChartData,
     chartType: String,
-    onTypeChange: (String) -> Unit
+    onTypeChange: (String) -> Unit,
+    transactions: List<Transaction> = emptyList(),
+    onNavigateToReceiptsWithFilter: (Long, Long, String) -> Unit = { _, _, _ -> }
 ) {
     val labels = chartData.labels
     val values = chartData.values
     var selectedBarIdx by remember { mutableStateOf<Int?>(null) }
+    var showBottomSheetBarIdx by remember { mutableStateOf<Int?>(null) }
 
     val barAnimatables = remember(chartType, values) {
         values.map { androidx.compose.animation.core.Animatable(0f) }
@@ -1118,6 +1408,20 @@ fun ChartCard(
                 )
             }
         }
+    }
+
+    if (showBottomSheetBarIdx != null && showBottomSheetBarIdx!! in labels.indices) {
+        CashFlowDetailsBottomSheet(
+            idx = showBottomSheetBarIdx!!,
+            chartData = chartData,
+            chartType = chartType,
+            transactions = transactions,
+            onDismiss = { showBottomSheetBarIdx = null },
+            onNavigateToReceiptsWithFilter = { startMs, endMs, label ->
+                showBottomSheetBarIdx = null
+                onNavigateToReceiptsWithFilter(startMs, endMs, label)
+            }
+        )
     }
 
     Card(
@@ -1237,7 +1541,28 @@ fun ChartCard(
                                 Text(title, fontSize = 13.sp, fontWeight = FontWeight.Bold, color = ColorOrange)
                                 Text(spentStr, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = ColorText1)
                             }
-                            Text(countStr, fontSize = 12.sp, color = ColorText2)
+                            Row(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .clickable { showBottomSheetBarIdx = idx }
+                                    .padding(horizontal = 6.dp, vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = countStr,
+                                    fontSize = 12.sp,
+                                    color = ColorOrange,
+                                    fontWeight = FontWeight.Bold,
+                                    textDecoration = androidx.compose.ui.text.style.TextDecoration.Underline
+                                )
+                                Spacer(modifier = Modifier.width(3.dp))
+                                Icon(
+                                    imageVector = Icons.Default.KeyboardArrowRight,
+                                    contentDescription = "View transactions",
+                                    tint = ColorOrange,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                            }
                         }
                     }
                 }
@@ -1348,6 +1673,251 @@ fun ChartCard(
                         modifier = Modifier.weight(1f),
                         textAlign = androidx.compose.ui.text.style.TextAlign.Center
                     )
+                }
+            }
+        }
+    }
+}
+
+fun getPeriodBoundsAndTitle(chartType: String, idx: Int, nowMs: Long = System.currentTimeMillis()): Triple<Long, Long, String> {
+    if (chartType == "weekly") {
+        val mondayMs = DashboardViewModel.getMondayOfWeek(nowMs)
+        val dayStart = mondayMs + idx * 86400000L
+        val dayEnd = dayStart + 86400000L - 1L
+        val dayName = when (idx) {
+            0 -> "Monday"
+            1 -> "Tuesday"
+            2 -> "Wednesday"
+            3 -> "Thursday"
+            4 -> "Friday"
+            5 -> "Saturday"
+            6 -> "Sunday"
+            else -> "Day"
+        }
+        val dateStr = java.text.SimpleDateFormat("d MMM yyyy", java.util.Locale.US).format(java.util.Date(dayStart))
+        return Triple(dayStart, dayEnd, "$dayName · $dateStr")
+    } else {
+        val (monthStart, monthEnd) = DashboardViewModel.getCurrentMonthBounds(nowMs)
+        val cal = java.util.Calendar.getInstance()
+        cal.timeInMillis = monthStart
+        val startDay = when (idx) {
+            0 -> 1
+            1 -> 8
+            2 -> 15
+            3 -> 22
+            else -> 29
+        }
+        val endDay = when (idx) {
+            0 -> 7
+            1 -> 14
+            2 -> 21
+            3 -> 28
+            else -> -1
+        }
+        cal.set(java.util.Calendar.DAY_OF_MONTH, startDay)
+        cal.set(java.util.Calendar.HOUR_OF_DAY, 0)
+        cal.set(java.util.Calendar.MINUTE, 0)
+        cal.set(java.util.Calendar.SECOND, 0)
+        cal.set(java.util.Calendar.MILLISECOND, 0)
+        val startMs = cal.timeInMillis
+
+        val endMs = if (endDay == -1) {
+            monthEnd
+        } else {
+            cal.set(java.util.Calendar.DAY_OF_MONTH, endDay)
+            cal.set(java.util.Calendar.HOUR_OF_DAY, 23)
+            cal.set(java.util.Calendar.MINUTE, 59)
+            cal.set(java.util.Calendar.SECOND, 59)
+            cal.set(java.util.Calendar.MILLISECOND, 999)
+            cal.timeInMillis
+        }
+        val title = when (idx) {
+            0 -> "Week 1 (1st–7th)"
+            1 -> "Week 2 (8th–14th)"
+            2 -> "Week 3 (15th–21st)"
+            3 -> "Week 4 (22nd–28th)"
+            else -> "Week 5 (29th+)"
+        }
+        val monthYearStr = java.text.SimpleDateFormat("MMM yyyy", java.util.Locale.US).format(java.util.Date(monthStart))
+        return Triple(startMs, endMs, "$title · $monthYearStr")
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun CashFlowDetailsBottomSheet(
+    idx: Int,
+    chartData: CashFlowChartData,
+    chartType: String,
+    transactions: List<Transaction>,
+    onDismiss: () -> Unit,
+    onNavigateToReceiptsWithFilter: (Long, Long, String) -> Unit
+) {
+    val (startMs, endMs, periodTitle) = remember(chartType, idx) {
+        getPeriodBoundsAndTitle(chartType, idx, System.currentTimeMillis())
+    }
+    val periodTransactions = remember(chartType, idx, transactions, startMs, endMs) {
+        val confirmed = DashboardViewModel.computeConfirmedOutgoing(transactions)
+        if (chartType == "weekly") {
+            confirmed.filter { it.timestamp in startMs..endMs }
+        } else {
+            val (monthStart, monthEnd) = DashboardViewModel.getCurrentMonthBounds(System.currentTimeMillis())
+            val monthTxns = confirmed.filter { it.timestamp in monthStart..monthEnd }
+            val cal = java.util.Calendar.getInstance()
+            monthTxns.filter { t ->
+                cal.timeInMillis = t.timestamp
+                val day = cal.get(java.util.Calendar.DAY_OF_MONTH)
+                val bucket = when {
+                    day <= 7 -> 0
+                    day <= 14 -> 1
+                    day <= 21 -> 2
+                    day <= 28 -> 3
+                    else -> 4
+                }
+                bucket == idx
+            }
+        }
+    }
+    val totalSpentFormatted = remember(periodTransactions) {
+        val sum = periodTransactions.sumOf { DashboardViewModel.parseAmount(it.amount) }
+        "₹" + if (sum == 0.0) "0" else String.format(java.util.Locale.US, "%,.2f", sum)
+    }
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = ColorBg1,
+        contentColor = ColorText1,
+        dragHandle = { BottomSheetDefaults.DragHandle(color = ColorText3) }
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(bottom = 24.dp)
+        ) {
+            // Header
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp, vertical = 8.dp)
+            ) {
+                Text(
+                    text = periodTitle,
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = ColorText1
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Total spending: ", fontSize = 13.sp, color = ColorText2)
+                    Text(totalSpentFormatted, fontSize = 15.sp, fontWeight = FontWeight.Bold, color = ColorOrange)
+                }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Transaction list
+            if (periodTransactions.isEmpty()) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 40.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Icon(Icons.Default.Receipt, contentDescription = null, tint = ColorText3, modifier = Modifier.size(44.dp))
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text("No confirmed transactions in this period", color = ColorText2, fontSize = 14.sp)
+                    }
+                }
+            } else {
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 420.dp),
+                    contentPadding = PaddingValues(horizontal = 20.dp, vertical = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    items(periodTransactions, key = { it.id }) { t ->
+                        Card(
+                            colors = CardDefaults.cardColors(containerColor = ColorBg2),
+                            shape = RoundedCornerShape(14.dp),
+                            border = BorderStroke(1.dp, ColorBg3),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(14.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1.3f)) {
+                                    Text(t.merchant, fontSize = 15.sp, fontWeight = FontWeight.Bold, color = ColorText1)
+                                    Spacer(modifier = Modifier.height(6.dp))
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(24.dp)
+                                                .border(1.dp, Color.White.copy(alpha = 0.85f), RoundedCornerShape(6.dp)),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Icon(
+                                                imageVector = com.autoexpense.app.ui.getCategoryIcon(t.category),
+                                                contentDescription = null,
+                                                tint = Color.White,
+                                                modifier = Modifier.size(14.dp)
+                                            )
+                                        }
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        val cleanCat = com.autoexpense.app.ui.cleanCategoryName(t.category)
+                                        Text(cleanCat, fontSize = 12.sp, color = ColorText2)
+                                    }
+                                }
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Column(horizontalAlignment = Alignment.End, modifier = Modifier.weight(1f)) {
+                                    Text(t.amount, fontSize = 15.sp, fontWeight = FontWeight.Bold, color = ColorText1)
+                                    Spacer(modifier = Modifier.height(6.dp))
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        val sourceColor = when (t.source.lowercase()) {
+                                            "gpay" -> Color(0xFF4285F4)
+                                            "phonepe" -> Color(0xFF5F259F)
+                                            "paytm" -> Color(0xFF00BAF2)
+                                            else -> ColorOrange
+                                        }
+                                        Box(
+                                            modifier = Modifier
+                                                .size(6.dp)
+                                                .background(sourceColor, CircleShape)
+                                        )
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text("${t.source.uppercase()} · ${t.date}", fontSize = 11.sp, color = ColorText3)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // View all in Receipts button
+            Button(
+                onClick = {
+                    onDismiss()
+                    onNavigateToReceiptsWithFilter(startMs, endMs, periodTitle)
+                },
+                colors = ButtonDefaults.buttonColors(containerColor = ColorOrange),
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp)
+                    .height(48.dp)
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.Receipt, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("View all in Receipts", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
                 }
             }
         }
@@ -1570,7 +2140,10 @@ fun SpendingByCategoryCard(
 
 // ── TRANSACTION TABLE ─────────────────────────────────────────────────────
 @Composable
-fun TransactionTable(transactions: List<Transaction>) {
+fun TransactionTable(
+    transactions: List<Transaction>,
+    onTransactionClick: ((Transaction) -> Unit)? = null
+) {
     Card(
         colors = CardDefaults.cardColors(containerColor = ColorBg2),
         shape = RoundedCornerShape(22.dp),
@@ -1582,6 +2155,9 @@ fun TransactionTable(transactions: List<Transaction>) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
+                        .clickable(enabled = onTransactionClick != null) {
+                            onTransactionClick?.invoke(t)
+                        }
                         .padding(horizontal = 18.dp, vertical = 14.dp)
                         .drawBehind {
                             drawLine(
@@ -1646,6 +2222,551 @@ fun TransactionTable(transactions: List<Transaction>) {
     }
 }
 
+// ── TRANSACTION DETAILS & CORRECTION COMPONENTS ────────────────────────────
+@Composable
+fun TransactionDetailsSheet(
+    transaction: Transaction,
+    onClose: () -> Unit,
+    onEditClick: () -> Unit,
+    onDeleteClick: () -> Unit
+) {
+    ModalBottomSheet(
+        onDismissRequest = onClose,
+        containerColor = ColorBg1,
+        dragHandle = { BottomSheetDefaults.DragHandle() }
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 24.dp, vertical = 16.dp)
+                .verticalScroll(rememberScrollState())
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("Transaction Details", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = ColorText1)
+                IconButton(onClick = onClose) {
+                    Icon(Icons.Default.Close, contentDescription = "Close", tint = ColorText2)
+                }
+            }
+            Spacer(modifier = Modifier.height(16.dp))
+            Text(transaction.merchant, fontSize = 22.sp, fontWeight = FontWeight.ExtraBold, color = ColorText1)
+            Spacer(modifier = Modifier.height(8.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(transaction.amount, fontSize = 26.sp, fontWeight = FontWeight.Black, color = ColorOrange)
+                Spacer(modifier = Modifier.width(12.dp))
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = ColorBg2),
+                    shape = RoundedCornerShape(6.dp)
+                ) {
+                    Text(
+                        "Detected from payment notification",
+                        fontSize = 10.sp,
+                        color = ColorText3,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                    )
+                }
+            }
+            Spacer(modifier = Modifier.height(20.dp))
+            HorizontalDivider(color = ColorBg3)
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // Category
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 6.dp)) {
+                val cleanCat = com.autoexpense.app.ui.cleanCategoryName(transaction.category)
+                Icon(
+                    imageVector = com.autoexpense.app.ui.getCategoryIcon(cleanCat),
+                    contentDescription = null,
+                    tint = ColorOrange,
+                    modifier = Modifier.size(20.dp)
+                )
+                Spacer(modifier = Modifier.width(12.dp))
+                Column {
+                    Text("Category", fontSize = 11.sp, color = ColorText3)
+                    Text(transaction.category, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = ColorText1)
+                }
+            }
+
+            // Payment Source
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 6.dp)) {
+                Box(
+                    modifier = Modifier
+                        .size(20.dp)
+                        .background(ColorOrange.copy(alpha = 0.2f), CircleShape),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Box(modifier = Modifier.size(8.dp).background(ColorOrange, CircleShape))
+                }
+                Spacer(modifier = Modifier.width(12.dp))
+                Column {
+                    Text("Payment Source", fontSize = 11.sp, color = ColorText3)
+                    Text(transaction.source.uppercase(), fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = ColorText1)
+                }
+            }
+
+            // Date & Time
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 6.dp)) {
+                Icon(Icons.Default.DateRange, contentDescription = null, tint = ColorOrange, modifier = Modifier.size(20.dp))
+                Spacer(modifier = Modifier.width(12.dp))
+                Column {
+                    Text("Date & Time", fontSize = 11.sp, color = ColorText3)
+                    Text(transaction.date, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = ColorText1)
+                }
+            }
+
+            // Transaction Note
+            Row(verticalAlignment = Alignment.Top, modifier = Modifier.padding(vertical = 6.dp)) {
+                Icon(Icons.Default.Description, contentDescription = null, tint = ColorOrange, modifier = Modifier.size(20.dp))
+                Spacer(modifier = Modifier.width(12.dp))
+                Column {
+                    Text("Transaction Note", fontSize = 11.sp, color = ColorText3)
+                    Text(
+                        if (transaction.note.isNotBlank()) transaction.note else "No note added",
+                        fontSize = 14.sp,
+                        color = if (transaction.note.isNotBlank()) ColorText1 else ColorText3,
+                        fontStyle = if (transaction.note.isNotBlank()) androidx.compose.ui.text.font.FontStyle.Normal else androidx.compose.ui.text.font.FontStyle.Italic
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                OutlinedButton(
+                    onClick = onEditClick,
+                    modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = ColorOrange),
+                    border = BorderStroke(1.5.dp, ColorOrange),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Edit", fontWeight = FontWeight.Bold)
+                }
+                OutlinedButton(
+                    onClick = onDeleteClick,
+                    modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFE53935)),
+                    border = BorderStroke(1.5.dp, Color(0xFFE53935)),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Icon(Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Delete", fontWeight = FontWeight.Bold)
+                }
+            }
+            Spacer(modifier = Modifier.height(24.dp))
+        }
+    }
+}
+
+@Composable
+fun TransactionEditSheet(
+    transaction: Transaction,
+    allCategories: List<String>,
+    onClose: () -> Unit,
+    onSave: (merchant: String, category: String, note: String) -> Unit
+) {
+    var editMerchant by remember { mutableStateOf(transaction.merchant) }
+    var editCategory by remember { mutableStateOf(transaction.category) }
+    var editNote by remember { mutableStateOf(transaction.note) }
+
+    ModalBottomSheet(
+        onDismissRequest = onClose,
+        containerColor = ColorBg1,
+        dragHandle = { BottomSheetDefaults.DragHandle() }
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 24.dp, vertical = 16.dp)
+                .verticalScroll(rememberScrollState())
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("Edit Transaction", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = ColorText1)
+                IconButton(onClick = onClose) {
+                    Icon(Icons.Default.Close, contentDescription = "Close", tint = ColorText2)
+                }
+            }
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // Read-only detected amount block
+            Card(
+                colors = CardDefaults.cardColors(containerColor = ColorBg2),
+                shape = RoundedCornerShape(12.dp),
+                border = BorderStroke(1.dp, ColorBg3),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(14.dp)) {
+                    Text("Detected Amount (Read-only)", fontSize = 11.sp, color = ColorText3)
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(transaction.amount, fontSize = 20.sp, fontWeight = FontWeight.Bold, color = ColorOrange)
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text("Detected from payment notification", fontSize = 11.sp, color = ColorText3)
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+            OutlinedTextField(
+                value = editMerchant,
+                onValueChange = { editMerchant = it },
+                label = { Text("Merchant Name", color = ColorText2) },
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = ColorOrange,
+                    unfocusedBorderColor = ColorBg3,
+                    focusedTextColor = ColorText1,
+                    unfocusedTextColor = ColorText1,
+                    focusedContainerColor = ColorBg2,
+                    unfocusedContainerColor = ColorBg2
+                ),
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            Spacer(modifier = Modifier.height(16.dp))
+            Text("Category", fontSize = 13.sp, color = ColorText2, fontWeight = FontWeight.Medium)
+            Spacer(modifier = Modifier.height(8.dp))
+            FlowRow(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                allCategories.forEach { cat ->
+                    val isSelected = cat.equals(editCategory, ignoreCase = true)
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(18.dp))
+                            .background(if (isSelected) ColorOrange else ColorBg2)
+                            .border(1.dp, if (isSelected) ColorOrange else ColorBg3, RoundedCornerShape(18.dp))
+                            .clickable { editCategory = cat }
+                            .padding(horizontal = 14.dp, vertical = 8.dp)
+                    ) {
+                        Text(
+                            cat,
+                            fontSize = 12.sp,
+                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                            color = if (isSelected) Color.White else ColorText2
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+            OutlinedTextField(
+                value = editNote,
+                onValueChange = { editNote = it },
+                label = { Text("Transaction Note", color = ColorText2) },
+                placeholder = { Text("Add any extra notes here...", color = ColorText3) },
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = ColorOrange,
+                    unfocusedBorderColor = ColorBg3,
+                    focusedTextColor = ColorText1,
+                    unfocusedTextColor = ColorText1,
+                    focusedContainerColor = ColorBg2,
+                    unfocusedContainerColor = ColorBg2
+                ),
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            Spacer(modifier = Modifier.height(24.dp))
+            Button(
+                onClick = { onSave(editMerchant.trim(), editCategory, editNote.trim()) },
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.buttonColors(containerColor = ColorOrange, contentColor = Color.White),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Text("Save Changes", fontSize = 15.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(vertical = 4.dp))
+            }
+            Spacer(modifier = Modifier.height(24.dp))
+        }
+    }
+}
+
+@Composable
+fun ReceiptsFilterSheet(
+    filterSettings: ReceiptsFilterSettings,
+    dynamicSources: List<String>,
+    onClose: () -> Unit,
+    onReset: () -> Unit,
+    onApply: (DateFilter?, CategoryFilterOption, String?, Double?, Double?) -> Unit
+) {
+    var selectedDateOption by remember { mutableStateOf(filterSettings.dateFilter?.label ?: "All time") }
+    var customStartMs by remember { mutableStateOf(filterSettings.dateFilter?.startMs ?: System.currentTimeMillis()) }
+    var customEndMs by remember { mutableStateOf(filterSettings.dateFilter?.endMs ?: System.currentTimeMillis()) }
+
+    var selectedCategoryOption by remember { mutableStateOf(filterSettings.categoryFilter) }
+    var selectedSourceOption by remember { mutableStateOf(filterSettings.sourceFilter ?: "All sources") }
+    var minAmountText by remember { mutableStateOf(filterSettings.minAmount?.let { if (it == it.toLong().toDouble()) it.toLong().toString() else it.toString() } ?: "") }
+    var maxAmountText by remember { mutableStateOf(filterSettings.maxAmount?.let { if (it == it.toLong().toDouble()) it.toLong().toString() else it.toString() } ?: "") }
+
+    val dateOptions = listOf("All time", "Today", "This week", "This month", "Custom date range")
+    val catOptions = listOf(
+        CategoryFilterOption.ALL to "All categories",
+        CategoryFilterOption.BUILT_IN to "Built-in categories",
+        CategoryFilterOption.USER_CREATED to "User-created categories"
+    )
+    val sourceOptions = listOf("All sources") + dynamicSources
+
+    ModalBottomSheet(
+        onDismissRequest = onClose,
+        containerColor = ColorBg1,
+        dragHandle = { BottomSheetDefaults.DragHandle() }
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 24.dp, vertical = 16.dp)
+                .verticalScroll(rememberScrollState())
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("Filter Receipts", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = ColorText1)
+                IconButton(onClick = onClose) {
+                    Icon(Icons.Default.Close, contentDescription = "Close", tint = ColorText2)
+                }
+            }
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // Date section
+            Text("Date Range", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = ColorText1)
+            Spacer(modifier = Modifier.height(8.dp))
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                dateOptions.forEach { opt ->
+                    val isSelected = selectedDateOption == opt
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(if (isSelected) ColorOrange else ColorBg2)
+                            .border(1.dp, if (isSelected) ColorOrange else ColorBg3, RoundedCornerShape(16.dp))
+                            .clickable { selectedDateOption = opt }
+                            .padding(horizontal = 12.dp, vertical = 6.dp)
+                    ) {
+                        Text(
+                            opt,
+                            fontSize = 12.sp,
+                            color = if (isSelected) Color.White else ColorText2,
+                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+            // Category section
+            Text("Category Type", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = ColorText1)
+            Spacer(modifier = Modifier.height(8.dp))
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                catOptions.forEach { (opt, label) ->
+                    val isSelected = selectedCategoryOption == opt
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(if (isSelected) ColorOrange else ColorBg2)
+                            .border(1.dp, if (isSelected) ColorOrange else ColorBg3, RoundedCornerShape(16.dp))
+                            .clickable { selectedCategoryOption = opt }
+                            .padding(horizontal = 12.dp, vertical = 6.dp)
+                    ) {
+                        Text(
+                            label,
+                            fontSize = 12.sp,
+                            color = if (isSelected) Color.White else ColorText2,
+                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+            // Payment source section
+            Text("Payment Source", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = ColorText1)
+            Spacer(modifier = Modifier.height(8.dp))
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                sourceOptions.forEach { src ->
+                    val isSelected = selectedSourceOption.equals(src, ignoreCase = true)
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(if (isSelected) ColorOrange else ColorBg2)
+                            .border(1.dp, if (isSelected) ColorOrange else ColorBg3, RoundedCornerShape(16.dp))
+                            .clickable { selectedSourceOption = src }
+                            .padding(horizontal = 12.dp, vertical = 6.dp)
+                    ) {
+                        Text(
+                            src.uppercase(),
+                            fontSize = 12.sp,
+                            color = if (isSelected) Color.White else ColorText2,
+                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+            // Amount range section
+            Text("Amount Range (₹)", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = ColorText1)
+            Spacer(modifier = Modifier.height(8.dp))
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                OutlinedTextField(
+                    value = minAmountText,
+                    onValueChange = { minAmountText = it.filter { ch -> ch.isDigit() || ch == '.' } },
+                    label = { Text("Minimum", color = ColorText3) },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = ColorOrange,
+                        unfocusedBorderColor = ColorBg3,
+                        focusedTextColor = ColorText1,
+                        unfocusedTextColor = ColorText1,
+                        focusedContainerColor = ColorBg2,
+                        unfocusedContainerColor = ColorBg2
+                    ),
+                    modifier = Modifier.weight(1f)
+                )
+                OutlinedTextField(
+                    value = maxAmountText,
+                    onValueChange = { maxAmountText = it.filter { ch -> ch.isDigit() || ch == '.' } },
+                    label = { Text("Maximum", color = ColorText3) },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = ColorOrange,
+                        unfocusedBorderColor = ColorBg3,
+                        focusedTextColor = ColorText1,
+                        unfocusedTextColor = ColorText1,
+                        focusedContainerColor = ColorBg2,
+                        unfocusedContainerColor = ColorBg2
+                    ),
+                    modifier = Modifier.weight(1f)
+                )
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                OutlinedButton(
+                    onClick = onReset,
+                    modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = ColorText2),
+                    border = BorderStroke(1.dp, ColorBg3),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text("Reset filters")
+                }
+                Button(
+                    onClick = {
+                        val newDateFilter: DateFilter? = when (selectedDateOption) {
+                            "All time" -> null
+                            "Today" -> {
+                                val cal = java.util.Calendar.getInstance()
+                                cal.set(java.util.Calendar.HOUR_OF_DAY, 0)
+                                cal.set(java.util.Calendar.MINUTE, 0)
+                                cal.set(java.util.Calendar.SECOND, 0)
+                                cal.set(java.util.Calendar.MILLISECOND, 0)
+                                val start = cal.timeInMillis
+                                DateFilter(start, start + 86400000L - 1L, "Today")
+                            }
+                            "This week" -> {
+                                val mon = DashboardViewModel.getMondayOfWeek()
+                                DateFilter(mon, mon + 7L * 86400000L - 1L, "This week")
+                            }
+                            "This month" -> {
+                                val bounds = DashboardViewModel.getCurrentMonthBounds()
+                                DateFilter(bounds.first, bounds.second, "This month")
+                            }
+                            else -> DateFilter(customStartMs, customEndMs, "Custom range")
+                        }
+                        val finalSource = if (selectedSourceOption.equals("All sources", ignoreCase = true)) null else selectedSourceOption
+                        onApply(
+                            newDateFilter,
+                            selectedCategoryOption,
+                            finalSource,
+                            minAmountText.toDoubleOrNull(),
+                            maxAmountText.toDoubleOrNull()
+                        )
+                    },
+                    modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.buttonColors(containerColor = ColorOrange, contentColor = Color.White),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text("Apply filters", fontWeight = FontWeight.Bold)
+                }
+            }
+            Spacer(modifier = Modifier.height(24.dp))
+        }
+    }
+}
+
+@Composable
+fun ReceiptsSortSheet(
+    currentSort: SortOption,
+    onClose: () -> Unit,
+    onSelectSort: (SortOption) -> Unit
+) {
+    ModalBottomSheet(
+        onDismissRequest = onClose,
+        containerColor = ColorBg1,
+        dragHandle = { BottomSheetDefaults.DragHandle() }
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 24.dp, vertical = 16.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("Sort Receipts By", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = ColorText1)
+                IconButton(onClick = onClose) {
+                    Icon(Icons.Default.Close, contentDescription = "Close", tint = ColorText2)
+                }
+            }
+            Spacer(modifier = Modifier.height(12.dp))
+            SortOption.values().forEach { opt ->
+                val isSelected = opt == currentSort
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(if (isSelected) ColorOrange.copy(alpha = 0.15f) else Color.Transparent)
+                        .clickable { onSelectSort(opt) }
+                        .padding(horizontal = 16.dp, vertical = 14.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        opt.label,
+                        fontSize = 15.sp,
+                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                        color = if (isSelected) ColorOrange else ColorText1
+                    )
+                    if (isSelected) {
+                        Icon(Icons.Default.Check, contentDescription = null, tint = ColorOrange, modifier = Modifier.size(18.dp))
+                    }
+                }
+            }
+            Spacer(modifier = Modifier.height(24.dp))
+        }
+    }
+}
+
 // ── RECEIPTS LEDGER SCREEN ────────────────────────────────────────────────
 @Composable
 fun ReceiptsLedgerScreen(
@@ -1653,6 +2774,26 @@ fun ReceiptsLedgerScreen(
     onNavigateToExport: () -> Unit = {}
 ) {
     val confirmedTxns by viewModel.confirmedTransactions.collectAsState()
+    val filterSettings by viewModel.filterSettings.collectAsState()
+    val dynamicSources by viewModel.dynamicSources.collectAsState()
+
+    val customCategories by com.autoexpense.app.data.CustomCategoryRepository.customCategories.collectAsState(initial = emptyList())
+    val baseCategories = listOf(
+        "Food & Dining", "Transport", "Groceries", "Shopping", "Entertainment",
+        "Healthcare", "Rent / Bills", "Travel", "Personal Transfer"
+    )
+    val allCategories = (baseCategories + customCategories.map { it.name }).distinct()
+
+    var selectedTransaction by remember { mutableStateOf<Transaction?>(null) }
+    var showEditSheet by remember { mutableStateOf(false) }
+    var showDeleteDialog by remember { mutableStateOf(false) }
+    var showFilterSheet by remember { mutableStateOf(false) }
+    var showSortSheet by remember { mutableStateOf(false) }
+
+    var showRememberPrompt by remember { mutableStateOf(false) }
+    var rememberMerchant by remember { mutableStateOf("") }
+    var rememberCategory by remember { mutableStateOf("") }
+    val scope = rememberCoroutineScope()
 
     Column(
         modifier = Modifier
@@ -1660,6 +2801,7 @@ fun ReceiptsLedgerScreen(
             .background(ColorBg0)
             .padding(16.dp)
     ) {
+        // Header row
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -1671,7 +2813,7 @@ fun ReceiptsLedgerScreen(
                     "All your confirmed UPI transactions in one place.",
                     fontSize = 12.sp,
                     color = ColorText2,
-                    modifier = Modifier.padding(bottom = 16.dp)
+                    modifier = Modifier.padding(bottom = 12.dp)
                 )
             }
 
@@ -1688,6 +2830,202 @@ fun ReceiptsLedgerScreen(
             }
         }
 
+        // Search Bar and Filter/Sort Row
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(bottom = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            OutlinedTextField(
+                value = filterSettings.searchQuery,
+                onValueChange = { viewModel.setSearchQuery(it) },
+                placeholder = { Text("Search merchant, category, or note...", fontSize = 13.sp, color = ColorText3) },
+                leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = ColorText3, modifier = Modifier.size(18.dp)) },
+                trailingIcon = if (filterSettings.searchQuery.isNotEmpty()) {
+                    {
+                        IconButton(onClick = { viewModel.setSearchQuery("") }) {
+                            Icon(Icons.Default.Close, contentDescription = "Clear", tint = ColorText3, modifier = Modifier.size(16.dp))
+                        }
+                    }
+                } else null,
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = ColorOrange,
+                    unfocusedBorderColor = ColorBg3,
+                    focusedTextColor = ColorText1,
+                    unfocusedTextColor = ColorText1,
+                    focusedContainerColor = ColorBg2,
+                    unfocusedContainerColor = ColorBg2
+                ),
+                shape = RoundedCornerShape(14.dp),
+                modifier = Modifier
+                    .weight(1f)
+                    .height(52.dp)
+            )
+
+            // Filter button
+            Box {
+                OutlinedButton(
+                    onClick = { showFilterSheet = true },
+                    border = BorderStroke(1.dp, if (filterSettings.activeFilterCount() > 0) ColorOrange else ColorBg3),
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        contentColor = if (filterSettings.activeFilterCount() > 0) ColorOrange else ColorText2
+                    ),
+                    shape = RoundedCornerShape(14.dp),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 12.dp),
+                    modifier = Modifier.height(52.dp)
+                ) {
+                    Icon(Icons.Default.FilterList, contentDescription = "Filter", modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("Filter", fontSize = 13.sp)
+                }
+                if (filterSettings.activeFilterCount() > 0) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .offset(x = 4.dp, y = (-4).dp)
+                            .size(20.dp)
+                            .background(ColorOrange, CircleShape)
+                            .border(1.dp, ColorBg0, CircleShape),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            filterSettings.activeFilterCount().toString(),
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White
+                        )
+                    }
+                }
+            }
+
+            // Sort button
+            OutlinedButton(
+                onClick = { showSortSheet = true },
+                border = BorderStroke(1.dp, ColorBg3),
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = ColorText2),
+                shape = RoundedCornerShape(14.dp),
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 12.dp),
+                modifier = Modifier.height(52.dp)
+            ) {
+                Icon(Icons.Default.Sort, contentDescription = "Sort", modifier = Modifier.size(18.dp))
+                Spacer(modifier = Modifier.width(4.dp))
+                Text("Sort", fontSize = 13.sp)
+            }
+        }
+
+        // Active filter chips
+        if (filterSettings.activeFilterCount() > 0) {
+            LazyRow(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 12.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                if (filterSettings.dateFilter != null) {
+                    item {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(ColorOrange.copy(alpha = 0.15f))
+                                .padding(horizontal = 10.dp, vertical = 6.dp)
+                        ) {
+                            Text("Date: ${filterSettings.dateFilter!!.label}", fontSize = 11.sp, color = ColorOrange, fontWeight = FontWeight.SemiBold)
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Icon(
+                                Icons.Default.Close,
+                                contentDescription = "Clear date filter",
+                                tint = ColorOrange,
+                                modifier = Modifier
+                                    .size(14.dp)
+                                    .clickable { viewModel.clearDateFilter() }
+                            )
+                        }
+                    }
+                }
+                if (filterSettings.categoryFilter != CategoryFilterOption.ALL) {
+                    item {
+                        val label = if (filterSettings.categoryFilter == CategoryFilterOption.BUILT_IN) "Built-in" else "User-created"
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(ColorOrange.copy(alpha = 0.15f))
+                                .padding(horizontal = 10.dp, vertical = 6.dp)
+                        ) {
+                            Text("Category: $label", fontSize = 11.sp, color = ColorOrange, fontWeight = FontWeight.SemiBold)
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Icon(
+                                Icons.Default.Close,
+                                contentDescription = "Clear category filter",
+                                tint = ColorOrange,
+                                modifier = Modifier
+                                    .size(14.dp)
+                                    .clickable { viewModel.clearCategoryFilter() }
+                            )
+                        }
+                    }
+                }
+                if (!filterSettings.sourceFilter.isNullOrEmpty()) {
+                    item {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(ColorOrange.copy(alpha = 0.15f))
+                                .padding(horizontal = 10.dp, vertical = 6.dp)
+                        ) {
+                            Text("Source: ${filterSettings.sourceFilter!!.uppercase()}", fontSize = 11.sp, color = ColorOrange, fontWeight = FontWeight.SemiBold)
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Icon(
+                                Icons.Default.Close,
+                                contentDescription = "Clear source filter",
+                                tint = ColorOrange,
+                                modifier = Modifier
+                                    .size(14.dp)
+                                    .clickable { viewModel.clearSourceFilter() }
+                            )
+                        }
+                    }
+                }
+                if (filterSettings.minAmount != null || filterSettings.maxAmount != null) {
+                    item {
+                        val minStr = filterSettings.minAmount?.let { "₹$it" } ?: "₹0"
+                        val maxStr = filterSettings.maxAmount?.let { "₹$it" } ?: "Any"
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(ColorOrange.copy(alpha = 0.15f))
+                                .padding(horizontal = 10.dp, vertical = 6.dp)
+                        ) {
+                            Text("Amount: $minStr - $maxStr", fontSize = 11.sp, color = ColorOrange, fontWeight = FontWeight.SemiBold)
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Icon(
+                                Icons.Default.Close,
+                                contentDescription = "Clear amount filter",
+                                tint = ColorOrange,
+                                modifier = Modifier
+                                    .size(14.dp)
+                                    .clickable { viewModel.clearAmountFilter() }
+                            )
+                        }
+                    }
+                }
+                if (filterSettings.activeFilterCount() > 1) {
+                    item {
+                        TextButton(onClick = { viewModel.resetFilters() }) {
+                            Text("Clear all", color = ColorOrange, fontSize = 11.sp)
+                        }
+                    }
+                }
+            }
+        }
+
+        // Transaction list or Empty states
         if (confirmedTxns.isEmpty()) {
             Box(
                 modifier = Modifier
@@ -1696,18 +3034,163 @@ fun ReceiptsLedgerScreen(
                 contentAlignment = Alignment.Center
             ) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Icon(Icons.Default.Receipt, contentDescription = null, modifier = Modifier.size(48.dp), tint = ColorText3)
+                    Icon(
+                        if (filterSettings.hasActiveSearchOrFilters()) Icons.Default.Search else Icons.Default.Receipt,
+                        contentDescription = null,
+                        modifier = Modifier.size(48.dp),
+                        tint = ColorText3
+                    )
                     Spacer(modifier = Modifier.height(12.dp))
-                    Text("No confirmed transactions yet", color = ColorText2, fontSize = 14.sp)
+                    Text(
+                        if (filterSettings.hasActiveSearchOrFilters()) "No matching transactions found" else "No confirmed transactions yet",
+                        color = ColorText2,
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    if (filterSettings.hasActiveSearchOrFilters()) {
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text("Try adjusting your search query or clearing filters.", color = ColorText3, fontSize = 12.sp)
+                        Spacer(modifier = Modifier.height(16.dp))
+                        OutlinedButton(
+                            onClick = { viewModel.clearAll() },
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = ColorOrange),
+                            border = BorderStroke(1.dp, ColorOrange)
+                        ) {
+                            Text("Clear Search & Filters", fontSize = 12.sp)
+                        }
+                    }
                 }
             }
         } else {
             Box(modifier = Modifier.weight(1f)) {
                 Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
-                    TransactionTable(confirmedTxns)
+                    TransactionTable(
+                        transactions = confirmedTxns,
+                        onTransactionClick = { tx ->
+                            selectedTransaction = tx
+                        }
+                    )
                 }
             }
         }
+    }
+
+    // Bottom sheets and Dialogs
+    if (selectedTransaction != null && !showEditSheet && !showDeleteDialog) {
+        TransactionDetailsSheet(
+            transaction = selectedTransaction!!,
+            onClose = { selectedTransaction = null },
+            onEditClick = { showEditSheet = true },
+            onDeleteClick = { showDeleteDialog = true }
+        )
+    }
+
+    if (showEditSheet && selectedTransaction != null) {
+        TransactionEditSheet(
+            transaction = selectedTransaction!!,
+            allCategories = allCategories,
+            onClose = { showEditSheet = false },
+            onSave = { newMerchant, newCategory, newNote ->
+                val origCat = selectedTransaction!!.category
+                val id = selectedTransaction!!.id
+                TransactionRepository.updateTransaction(id, newMerchant, newCategory, newNote, updateMemory = false)
+                selectedTransaction = selectedTransaction!!.copy(merchant = newMerchant, category = newCategory, note = newNote)
+                showEditSheet = false
+                if (!com.autoexpense.app.ui.cleanCategoryName(newCategory).equals(com.autoexpense.app.ui.cleanCategoryName(origCat), ignoreCase = true)) {
+                    rememberMerchant = newMerchant
+                    rememberCategory = newCategory
+                    showRememberPrompt = true
+                }
+            }
+        )
+    }
+
+    if (showDeleteDialog && selectedTransaction != null) {
+        AlertDialog(
+            onDismissRequest = { showDeleteDialog = false },
+            containerColor = ColorBg1,
+            titleContentColor = ColorText1,
+            textContentColor = ColorText2,
+            title = { Text("Delete this transaction?", fontWeight = FontWeight.Bold) },
+            text = { Text("This removes the transaction from your spending history and recalculates your Dashboard and budgets. This cannot be undone.") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val id = selectedTransaction!!.id
+                        TransactionRepository.deleteTransaction(id)
+                        showDeleteDialog = false
+                        selectedTransaction = null
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE53935), contentColor = Color.White)
+                ) {
+                    Text("Delete")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteDialog = false }) {
+                    Text("Cancel", color = ColorText2)
+                }
+            }
+        )
+    }
+
+    if (showRememberPrompt) {
+        AlertDialog(
+            onDismissRequest = { showRememberPrompt = false },
+            containerColor = ColorBg1,
+            titleContentColor = ColorText1,
+            textContentColor = ColorText2,
+            title = { Text("Remember Category?", fontWeight = FontWeight.Bold) },
+            text = { Text("Use this category ($rememberCategory) for future payments from $rememberMerchant?") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        scope.launch {
+                            com.autoexpense.app.data.MerchantCategoryRepository.saveMapping(rememberMerchant, rememberCategory)
+                        }
+                        showRememberPrompt = false
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = ColorOrange, contentColor = Color.White)
+                ) {
+                    Text("Remember")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showRememberPrompt = false }) {
+                    Text("Not now", color = ColorText2)
+                }
+            }
+        )
+    }
+
+    if (showFilterSheet) {
+        ReceiptsFilterSheet(
+            filterSettings = filterSettings,
+            dynamicSources = dynamicSources,
+            onClose = { showFilterSheet = false },
+            onReset = {
+                viewModel.resetFilters()
+                showFilterSheet = false
+            },
+            onApply = { df, catOpt, srcOpt, minAmt, maxAmt ->
+                if (df != null) viewModel.setDateFilter(df.startMs, df.endMs, df.label) else viewModel.clearDateFilter()
+                viewModel.setCategoryFilter(catOpt)
+                viewModel.setSourceFilter(srcOpt)
+                viewModel.setAmountRange(minAmt, maxAmt)
+                showFilterSheet = false
+            }
+        )
+    }
+
+    if (showSortSheet) {
+        ReceiptsSortSheet(
+            currentSort = filterSettings.sortOption,
+            onClose = { showSortSheet = false },
+            onSelectSort = { opt ->
+                viewModel.setSortOption(opt)
+                showSortSheet = false
+            }
+        )
     }
 }
 
@@ -2084,6 +3567,12 @@ fun ReviewCard(
     var showCreateDialog by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
+    val mappings by com.autoexpense.app.data.MerchantCategoryRepository.mappings.collectAsState()
+    val allTxns by TransactionRepository.transactions.collectAsState()
+    val rememberedCategory = remember(txn.merchant, mappings, allTxns) {
+        com.autoexpense.app.data.MerchantCategoryRepository.getRememberedCategory(txn.merchant, allTxns)
+    }
+
     Card(
         colors = CardDefaults.cardColors(containerColor = ColorBg2),
         shape = RoundedCornerShape(22.dp),
@@ -2206,13 +3695,37 @@ fun ReviewCard(
                     "Personal Transfer" to "rc3_personal"
                 )
             }
-            val chips = baseChips + customCategories.map { it.name to "custom_${it.id}" }
+            val rawChips = baseChips + customCategories.map { it.name to "custom_${it.id}" }
+            val chips = if (rememberedCategory != null && rawChips.none { it.first.equals(rememberedCategory, ignoreCase = true) }) {
+                listOf(rememberedCategory to "remembered") + rawChips
+            } else {
+                rawChips
+            }
 
-            // Pre-select AI suggestion automatically if ready
-            LaunchedEffect(suggestedChipId) {
-                val matchingChip = chips.find { it.second == suggestedChipId }
-                if (matchingChip != null) {
-                    selectedCategory = matchingChip.first
+            // Pre-select remembered category, or AI suggestion if ready
+            LaunchedEffect(rememberedCategory, suggestedChipId) {
+                if (rememberedCategory != null) {
+                    selectedCategory = rememberedCategory
+                } else if (selectedCategory.isEmpty()) {
+                    val matchingChip = chips.find { it.second == suggestedChipId }
+                    if (matchingChip != null) {
+                        selectedCategory = matchingChip.first
+                    }
+                }
+            }
+
+            if (rememberedCategory != null) {
+                Row(
+                    modifier = Modifier
+                        .padding(bottom = 8.dp)
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(ColorOrange.copy(alpha = 0.15f))
+                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(Icons.Outlined.BookmarkBorder, contentDescription = null, tint = ColorOrange, modifier = Modifier.size(12.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("Remembered category", fontSize = 11.sp, color = ColorOrange, fontWeight = FontWeight.Bold)
                 }
             }
 
@@ -2346,7 +3859,6 @@ fun FlowRow(
     )
 }
 
-
 // ── NOTIFICATION SETUP CARD (Phase 2) ──────────────────────────────────────
 @Composable
 fun NotificationSetupCard(
@@ -2403,6 +3915,66 @@ fun NotificationSetupCard(
     }
 }
 
+@Composable
+fun DeviceReliabilityGuidanceCard(isHealthy: Boolean) {
+    if (isHealthy) return
+
+    val manufacturer = Build.MANUFACTURER?.lowercase() ?: ""
+    val title = when {
+        manufacturer.contains("xiaomi") || manufacturer.contains("redmi") || manufacturer.contains("poco") ->
+            "Improve Background Detection"
+        manufacturer.contains("samsung") ->
+            "Improve Background Detection"
+        manufacturer.contains("oneplus") || manufacturer.contains("oppo") || manufacturer.contains("realme") ->
+            "Improve Background Detection"
+        else ->
+            "Background Detection Help"
+    }
+
+    val instructions = when {
+        manufacturer.contains("xiaomi") || manufacturer.contains("redmi") || manufacturer.contains("poco") ->
+            "Enable 'Autostart' and set Battery Saver to 'No restrictions' in phone Settings so payment detection keeps running in the background."
+        manufacturer.contains("samsung") ->
+            "Remove AutoExpense from 'Sleeping apps' and 'Deep sleeping apps' in Device Care > Battery settings."
+        manufacturer.contains("oneplus") || manufacturer.contains("oppo") || manufacturer.contains("realme") ->
+            "Allow background activity and disable aggressive battery optimization for AutoExpense in phone Settings."
+        else ->
+            "Disable aggressive background battery optimization or task cleanup for AutoExpense in phone Settings."
+    }
+
+    Spacer(modifier = Modifier.height(12.dp))
+    Card(
+        colors = CardDefaults.cardColors(containerColor = ColorBg2),
+        shape = RoundedCornerShape(12.dp),
+        border = BorderStroke(1.dp, ColorOrange.copy(alpha = 0.35f)),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(modifier = Modifier.padding(14.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    imageVector = Icons.Default.Warning,
+                    contentDescription = null,
+                    tint = ColorOrange,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(
+                    title,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = ColorText1
+                )
+            }
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(
+                instructions,
+                fontSize = 12.sp,
+                color = ColorText2
+            )
+        }
+    }
+}
+
 // ── PROFILE SCREEN (Phase 2) ──────────────────────────────────────────────────
 @Composable
 fun ProfileScreen(
@@ -2412,17 +3984,42 @@ fun ProfileScreen(
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val notificationEnabled by viewModel.notificationAccessEnabled.collectAsState()
+    val rawListenerStatus by viewModel.listenerStatus.collectAsState()
+    val lastPaymentText by viewModel.lastPaymentDetectedText.collectAsState()
+    val isReconnecting by viewModel.isReconnecting.collectAsState()
+    val reconnectMessage by viewModel.reconnectStatusMessage.collectAsState()
 
     // Refresh permission status every time this screen resumes (after returning from Settings).
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
                 viewModel.refreshPermissionStatus(context)
+                viewModel.checkStatus(context)
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
+
+    LaunchedEffect(Unit) {
+        viewModel.refreshPermissionStatus(context)
+        viewModel.checkStatus(context)
+    }
+
+    // Determine status and health based on exact user requirements
+    val displayAccessText = if (notificationEnabled) "Enabled" else "Disabled"
+    val displayListenerStatus = if (notificationEnabled) rawListenerStatus else "Inactive"
+    val isAccessHealthy = notificationEnabled
+    val isListenerHealthy = notificationEnabled && displayListenerStatus == "Active"
+    val isOverallHealthy = isAccessHealthy && isListenerHealthy
+
+    // Expandable row state inside the card
+    var expanded by remember { mutableStateOf(false) }
+    val chevronRotation by animateFloatAsState(
+        targetValue = if (expanded) 180f else 0f,
+        animationSpec = tween(durationMillis = 250),
+        label = "chevronRotation"
+    )
 
     Column(
         modifier = Modifier
@@ -2462,9 +4059,9 @@ fun ProfileScreen(
 
         Column(modifier = Modifier.padding(16.dp)) {
 
-            // ── Notification Access section ────────────────────────────────
+            // ── Payment Detection section ────────────────────────────────
             Text(
-                "NOTIFICATION ACCESS",
+                "PAYMENT DETECTION",
                 fontSize = 11.sp,
                 fontWeight = FontWeight.Bold,
                 color = ColorText3,
@@ -2475,95 +4072,140 @@ fun ProfileScreen(
                 colors = CardDefaults.cardColors(containerColor = ColorBg2),
                 shape = RoundedCornerShape(12.dp),
                 border = BorderStroke(1.dp, ColorBg3),
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .animateContentSize(animationSpec = tween(durationMillis = 250))
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
-
-                    // Status row
+                    // 1. Notification Access
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        if (notificationEnabled) {
-                            Icon(
-                                imageVector = Icons.Default.CheckCircle,
-                                contentDescription = null,
-                                tint = ColorGreen,
-                                modifier = Modifier.size(18.dp)
-                            )
+                        Text("Notification Access", fontSize = 13.sp, color = ColorText2, modifier = Modifier.weight(1f))
+                        if (isAccessHealthy) {
+                            Icon(imageVector = Icons.Default.CheckCircle, contentDescription = null, tint = ColorGreen, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                "Enabled",
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = ColorGreen
-                            )
+                            Text("Enabled", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = ColorGreen)
                         } else {
-                            Icon(
-                                imageVector = Icons.Outlined.NotificationsOff,
-                                contentDescription = null,
-                                tint = ColorAmber,
-                                modifier = Modifier.size(18.dp)
-                            )
+                            Icon(imageVector = Icons.Outlined.NotificationsOff, contentDescription = null, tint = ColorAmber, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                "Not Enabled",
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = ColorAmber
-                            )
+                            Text("Disabled", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = ColorAmber)
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(8.dp))
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp), color = ColorBg3)
 
-                    Text(
-                        if (notificationEnabled)
-                            "Automatic expense detection is active."
-                        else
-                            "Allow AutoExpense to detect payment notifications and organize your expenses automatically.",
-                        fontSize = 12.sp,
-                        color = ColorText2
-                    )
-
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    if (notificationEnabled) {
-                        OutlinedButton(
-                            onClick = {
-                                context.startActivity(
-                                    android.content.Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
-                                )
-                            },
-                            border = BorderStroke(1.dp, ColorBg3),
-                            colors = ButtonDefaults.outlinedButtonColors(contentColor = ColorText2),
-                            shape = RoundedCornerShape(6.dp)
-                        ) {
-                            Text("Manage Access", fontSize = 12.sp)
+                    // 2. Listener Status (Entire row is tappable to expand/collapse dropdown inside the same card)
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { expanded = !expanded }
+                            .padding(vertical = 2.dp)
+                    ) {
+                        Text("Listener Status", fontSize = 13.sp, color = ColorText2, modifier = Modifier.weight(1f))
+                        val statusColor = when {
+                            !notificationEnabled -> ColorText3
+                            displayListenerStatus == "Active" -> ColorGreen
+                            displayListenerStatus == "Reconnecting" -> ColorBlue
+                            else -> ColorAmber
                         }
-                    } else {
-                        Button(
-                            onClick = {
-                                context.startActivity(
-                                    android.content.Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
-                                )
-                            },
-                            colors = ButtonDefaults.buttonColors(containerColor = ColorOrange),
-                            shape = RoundedCornerShape(6.dp)
+                        Box(
+                            modifier = Modifier
+                                .background(statusColor.copy(alpha = 0.15f), RoundedCornerShape(12.dp))
+                                .padding(horizontal = 8.dp, vertical = 3.dp)
                         ) {
-                            Text(
-                                "Enable Notification Access",
-                                fontSize = 12.sp,
-                                color = Color.White
-                            )
+                            Text(displayListenerStatus, fontSize = 12.sp, fontWeight = FontWeight.Bold, color = statusColor)
+                        }
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Icon(
+                            imageVector = Icons.Default.KeyboardArrowDown,
+                            contentDescription = "Expand details",
+                            tint = ColorText2,
+                            modifier = Modifier
+                                .size(18.dp)
+                                .rotate(chevronRotation)
+                        )
+                    }
+
+                    // Expanded section dropdown inside exact same card
+                    AnimatedVisibility(
+                        visible = expanded,
+                        enter = expandVertically(animationSpec = tween(250)) + fadeIn(animationSpec = tween(250)),
+                        exit = shrinkVertically(animationSpec = tween(250)) + fadeOut(animationSpec = tween(250))
+                    ) {
+                        Column(modifier = Modifier.fillMaxWidth().padding(top = 12.dp)) {
+                            HorizontalDivider(color = ColorBg3, modifier = Modifier.padding(bottom = 12.dp))
+
+                            Text("Last payment detected", fontSize = 12.sp, color = ColorText3)
+                            Spacer(modifier = Modifier.height(3.dp))
+                            val paymentDisplay = if (lastPaymentText.isBlank() || lastPaymentText.contains("No payments", ignoreCase = true)) {
+                                "No payments detected yet."
+                            } else {
+                                lastPaymentText
+                            }
+                            Text(paymentDisplay, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = ColorText1)
+
+                            Spacer(modifier = Modifier.height(10.dp))
+                            val statusMsg = when {
+                                !notificationEnabled -> "No payments detected yet."
+                                displayListenerStatus == "Active" -> "Payment detection is working normally."
+                                else -> if (reconnectMessage != null && reconnectMessage!!.isNotBlank()) reconnectMessage!! else "Payment detection requires attention."
+                            }
+                            val statusMsgColor = if (isListenerHealthy) ColorGreen else if (!notificationEnabled) ColorText2 else ColorAmber
+                            Text(statusMsg, fontSize = 12.sp, color = statusMsgColor)
+
+                            // Show "Enable Notification Access" button ONLY in disabled state
+                            if (!notificationEnabled) {
+                                Spacer(modifier = Modifier.height(14.dp))
+                                Button(
+                                    onClick = {
+                                        context.startActivity(android.content.Intent(android.provider.Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+                                    },
+                                    colors = ButtonDefaults.buttonColors(containerColor = ColorOrange),
+                                    shape = RoundedCornerShape(6.dp),
+                                    modifier = Modifier.fillMaxWidth().height(38.dp)
+                                ) {
+                                    Text("Enable Notification Access", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                                }
+                            } else if (!isListenerHealthy) {
+                                // Buttons Check Status / Reconnect Listener removed from normal healthy state, shown when recovery is needed
+                                Spacer(modifier = Modifier.height(14.dp))
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    OutlinedButton(
+                                        onClick = { viewModel.checkStatus(context) },
+                                        border = BorderStroke(1.dp, ColorBg3),
+                                        colors = ButtonDefaults.outlinedButtonColors(contentColor = ColorText2),
+                                        shape = RoundedCornerShape(6.dp),
+                                        modifier = Modifier.weight(1f).height(36.dp)
+                                    ) {
+                                        Text("Check Status", fontSize = 11.sp)
+                                    }
+                                    OutlinedButton(
+                                        onClick = { viewModel.reconnectListener(context) },
+                                        enabled = !isReconnecting,
+                                        border = BorderStroke(1.dp, if (isReconnecting) ColorBg4 else ColorOrange.copy(alpha = 0.5f)),
+                                        colors = ButtonDefaults.outlinedButtonColors(contentColor = if (isReconnecting) ColorText3 else ColorOrange),
+                                        shape = RoundedCornerShape(6.dp),
+                                        modifier = Modifier.weight(1f).height(36.dp)
+                                    ) {
+                                        Text(if (isReconnecting) "Reconnecting..." else "Reconnect", fontSize = 11.sp)
+                                    }
+                                }
+                            }
                         }
                     }
                 }
             }
 
-            Spacer(modifier = Modifier.height(20.dp))
+            // Compact dynamic manufacturer guidance shown ONLY when notification access is disabled OR listener is genuinely unhealthy
+            DeviceReliabilityGuidanceCard(isHealthy = isOverallHealthy)
 
-            // ── Debug-only notification simulator (stripped in release) ──────
+            Spacer(modifier = Modifier.height(20.dp))
             if (BuildConfig.DEBUG) {
                 Text(
                     "DEBUG - NOTIFICATION SIMULATOR",
