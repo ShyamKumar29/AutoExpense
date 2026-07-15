@@ -3,6 +3,7 @@
 
     <!-- Required on Android 13+ (API 33) to post budget-alert notifications -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.VIBRATE" />
 
     <application
         android:name=".AutoExpenseApplication"

@@ -83,14 +83,14 @@ private fun formatRupee(amount: Double): String {
 }
 
 /** Convert a raw (spent, limit) pair into the appropriate [BudgetLevel]. */
-fun computeLevel(spent: Double, limit: Double): BudgetLevel {
+fun computeLevel(spent: Double, limit: Double, warningThreshold: Double = 0.70): BudgetLevel {
     if (limit <= 0) return BudgetLevel.NORMAL
     val ratio = spent / limit
     return when {
         ratio > 1.0  -> BudgetLevel.EXCEEDED
         ratio >= 1.0 -> BudgetLevel.LIMIT_REACHED
         ratio >= 0.9 -> BudgetLevel.HIGH_WARNING
-        ratio >= 0.7 -> BudgetLevel.WARNING
+        ratio >= warningThreshold -> BudgetLevel.WARNING
         else         -> BudgetLevel.NORMAL
     }
 }

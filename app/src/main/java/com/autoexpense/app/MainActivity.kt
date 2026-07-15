@@ -102,35 +102,92 @@ import com.autoexpense.app.budget.BudgetWithSpending
 import com.autoexpense.app.budget.BudgetWarning
 import com.autoexpense.app.budget.computeLevel
 import com.autoexpense.app.budget.BudgetScreen
+import com.autoexpense.app.ui.SettingsScreen
+import com.autoexpense.app.ui.PaymentDetectionSetupScreen
+import com.autoexpense.app.ui.AppHaptic
 
 // ── COLOR PALETTE ──────────────────────────────────────────────────────────
-val ColorBg0 = Color(0xFF0D0D0F)
-val ColorBg1 = Color(0xFF13141A)
-val ColorBg2 = Color(0xFF1A1B24)
-val ColorBg3 = Color(0xFF22232F)
-val ColorBg4 = Color(0xFF2A2B3A)
+var ColorBg0 by mutableStateOf(Color(0xFF0D0D0F))
+var ColorBg1 by mutableStateOf(Color(0xFF13141A))
+var ColorBg2 by mutableStateOf(Color(0xFF1A1B24))
+var ColorBg3 by mutableStateOf(Color(0xFF22232F))
+var ColorBg4 by mutableStateOf(Color(0xFF2A2B3A))
 val ColorOrange = Color(0xFFFF6B2C)
 val ColorOrangeDim = Color(0x26FF6B2C)
 val ColorOrangeDark = Color(0xFFCC4A14)
-val ColorText1 = Color(0xFFF0F0F5)
-val ColorText2 = Color(0xFF9999B0)
-val ColorText3 = Color(0xFF5A5A70)
-val ColorGreen = Color(0xFF22C55E)
-val ColorRed = Color(0xFFEF4444)
-val ColorAmber = Color(0xFFF59E0B)
+var ColorText1 by mutableStateOf(Color(0xFFF0F0F5))
+var ColorText2 by mutableStateOf(Color(0xFF9999B0))
+var ColorText3 by mutableStateOf(Color(0xFF5A5A70))
+var ColorGreen by mutableStateOf(Color(0xFF22C55E))
+var ColorRed by mutableStateOf(Color(0xFFEF4444))
+var ColorAmber by mutableStateOf(Color(0xFFF59E0B))
 val ColorBlue = Color(0xFF3B82F6)
+
+fun updateAppThemeColors(isDark: Boolean) {
+    if (isDark) {
+        ColorBg0 = Color(0xFF0D0D0F)
+        ColorBg1 = Color(0xFF13141A)
+        ColorBg2 = Color(0xFF1A1B24)
+        ColorBg3 = Color(0xFF22232F)
+        ColorBg4 = Color(0xFF2A2B3A)
+        ColorText1 = Color(0xFFF0F0F5)
+        ColorText2 = Color(0xFF9999B0)
+        ColorText3 = Color(0xFF5A5A70)
+        ColorGreen = Color(0xFF22C55E)
+        ColorRed = Color(0xFFEF4444)
+        ColorAmber = Color(0xFFF59E0B)
+    } else {
+        ColorBg0 = Color(0xFFF7F7F9)
+        ColorBg1 = Color(0xFFF0F1F5)
+        ColorBg2 = Color(0xFFFFFFFF)
+        ColorBg3 = Color(0xFFE2E3E8)
+        ColorBg4 = Color(0xFFD6D8E2)
+        ColorText1 = Color(0xFF17171C)
+        ColorText2 = Color(0xFF686875)
+        ColorText3 = Color(0xFF8A8A99)
+        ColorGreen = Color(0xFF16A765)
+        ColorRed = Color(0xFFD64545)
+        ColorAmber = Color(0xFFD98A00)
+    }
+}
 
 // ── CUSTOM COMPOSE THEME ──────────────────────────────────────────────────
 @Composable
 fun AutoExpenseTheme(content: @Composable () -> Unit) {
-    val colors = darkColorScheme(
-        background = ColorBg0,
-        surface = ColorBg2,
-        primary = ColorOrange,
-        onBackground = ColorText1,
-        onSurface = ColorText1,
-        secondary = ColorText2
-    )
+    val context = LocalContext.current
+    val userPrefs = remember { com.autoexpense.app.data.UserPreferencesRepository.getInstance(context) }
+    val selectedTheme by userPrefs.theme.collectAsState(initial = "system")
+    val isSystemDark = isSystemInDarkTheme()
+
+    val isDark = when (selectedTheme) {
+        "light" -> false
+        "dark" -> true
+        else -> isSystemDark
+    }
+
+    LaunchedEffect(isDark) {
+        updateAppThemeColors(isDark)
+    }
+
+    val colors = if (isDark) {
+        darkColorScheme(
+            background = ColorBg0,
+            surface = ColorBg2,
+            primary = ColorOrange,
+            onBackground = ColorText1,
+            onSurface = ColorText1,
+            secondary = ColorText2
+        )
+    } else {
+        lightColorScheme(
+            background = ColorBg0,
+            surface = ColorBg2,
+            primary = ColorOrange,
+            onBackground = ColorText1,
+            onSurface = ColorText1,
+            secondary = ColorText2
+        )
+    }
     MaterialTheme(
         colorScheme = colors,
         typography = Typography(),
@@ -860,10 +917,21 @@ fun MainAppContainer(
     val context = LocalContext.current
     val userPrefs = remember { com.autoexpense.app.data.UserPreferencesRepository.getInstance(context) }
     val isOnboardingCompleted by userPrefs.isOnboardingCompleted.collectAsState(initial = false)
+    val isHapticEnabled by userPrefs.isHapticFeedbackEnabled.collectAsState(initial = true)
+    val budgetWarningThreshold by userPrefs.budgetWarningThreshold.collectAsState(initial = 0.7f)
     val userName by userPrefs.userName.collectAsState(initial = "")
     val scope = rememberCoroutineScope()
 
+    LaunchedEffect(isHapticEnabled) {
+        AppHaptic.isEnabled = isHapticEnabled
+    }
+    LaunchedEffect(budgetWarningThreshold) {
+        BudgetRepositorySingleton.currentWarningThreshold = budgetWarningThreshold.toDouble()
+    }
+
     var activeScreen by remember { mutableStateOf("dashboard") }
+    var openPaymentSetupFromDashboard by remember { mutableStateOf(false) }
+    var settingsReturnScreen by remember { mutableStateOf("profile") }
     // Session-only: once dismissed the card won't re-appear until next launch.
     var setupCardDismissed by remember { mutableStateOf(false) }
 
@@ -882,6 +950,7 @@ fun MainAppContainer(
     if (!isOnboardingCompleted) {
         com.autoexpense.app.ui.OnboardingScreen(
             onGetStarted = { name ->
+                AppHaptic.trigger(context)
                 scope.launch {
                     userPrefs.completeOnboarding(name)
                 }
@@ -923,6 +992,11 @@ fun MainAppContainer(
                             userName = userName,
                             onProfileClick = { activeScreen = "profile" },
                             showNotificationSetupCard = showNotificationSetupCard,
+                            onEnableAccess = {
+                                settingsReturnScreen = "dashboard"
+                                openPaymentSetupFromDashboard = true
+                                activeScreen = "settings"
+                            },
                             onDismissSetupCard = { setupCardDismissed = true },
                             onNavigateToReceiptsWithFilter = { startMs, endMs, label ->
                                 receiptsViewModel.setDateFilter(startMs, endMs, label)
@@ -942,7 +1016,41 @@ fun MainAppContainer(
                         "budget" -> BudgetScreen(viewModel = budgetViewModel)
                         "profile" -> ProfileScreen(
                             viewModel = profileViewModel,
-                            onNavigateBack = { activeScreen = "dashboard" }
+                            onNavigateBack = { activeScreen = "dashboard" },
+                            onNavigateToSettings = {
+                                settingsReturnScreen = "profile"
+                                activeScreen = "settings"
+                            }
+                        )
+                        "settings" -> {
+                            LaunchedEffect(openPaymentSetupFromDashboard) {
+                                if (openPaymentSetupFromDashboard) {
+                                    openPaymentSetupFromDashboard = false
+                                    activeScreen = "payment_setup"
+                                }
+                            }
+                            SettingsScreen(
+                                userPrefs = userPrefs,
+                                profileViewModel = profileViewModel,
+                                onNavigateBack = { activeScreen = settingsReturnScreen },
+                                onOpenPaymentSetup = { activeScreen = "payment_setup" },
+                                onOpenExport = { activeScreen = "export" },
+                                onDataCleared = {
+                                    setupCardDismissed = false
+                                    activeScreen = "dashboard"
+                                }
+                            )
+                        }
+                        "payment_setup" -> PaymentDetectionSetupScreen(
+                            onComplete = {
+                                AppHaptic.trigger(context)
+                                scope.launch {
+                                    userPrefs.completePaymentSetup()
+                                    activeScreen = "settings"
+                                }
+                            },
+                            isReviewMode = true,
+                            onNavigateBack = { activeScreen = "settings" }
                         )
                         "export" -> com.autoexpense.app.export.ExportScreen(
                             viewModel = exportViewModel,
@@ -1060,6 +1168,7 @@ fun DashboardScreen(
     userName: String = "",
     onProfileClick: () -> Unit = {},
     showNotificationSetupCard: Boolean = false,
+    onEnableAccess: () -> Unit = { onNavigate("settings") },
     onDismissSetupCard: () -> Unit = {},
     onNavigateToReceiptsWithFilter: (Long, Long, String) -> Unit = { _, _, _ -> onNavigate("receipts") }
 ) {
@@ -1087,7 +1196,7 @@ fun DashboardScreen(
         // Phase 2: dismissible notification-access setup card.
         if (showNotificationSetupCard) {
             NotificationSetupCard(
-                onEnable = { onNavigate("profile") },
+                onEnable = onEnableAccess,
                 onDismiss = onDismissSetupCard,
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
             )
@@ -2799,6 +2908,7 @@ fun ReceiptsLedgerScreen(
     var rememberAliasDisplayName by remember { mutableStateOf("") }
     var pendingRememberCategoryPrompt by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
 
     Column(
         modifier = Modifier
@@ -3096,6 +3206,7 @@ fun ReceiptsLedgerScreen(
             allCategories = allCategories,
             onClose = { showEditSheet = false },
             onSave = { newMerchant, newCategory, newNote ->
+                AppHaptic.trigger(context)
                 val origCat = selectedTransaction!!.category
                 val origMerchant = selectedTransaction!!.merchant
                 val origRawMerchant = if (selectedTransaction!!.rawMerchant.isNotBlank()) selectedTransaction!!.rawMerchant else origMerchant
@@ -3136,6 +3247,7 @@ fun ReceiptsLedgerScreen(
             confirmButton = {
                 Button(
                     onClick = {
+                        AppHaptic.trigger(context)
                         val id = selectedTransaction!!.id
                         TransactionRepository.deleteTransaction(id)
                         showDeleteDialog = false
@@ -3165,6 +3277,7 @@ fun ReceiptsLedgerScreen(
             confirmButton = {
                 Button(
                     onClick = {
+                        AppHaptic.trigger(context)
                         scope.launch {
                             com.autoexpense.app.data.MerchantCategoryRepository.saveMapping(rememberMerchant, rememberCategory)
                         }
@@ -3200,6 +3313,7 @@ fun ReceiptsLedgerScreen(
             confirmButton = {
                 Button(
                     onClick = {
+                        AppHaptic.trigger(context)
                         scope.launch {
                             com.autoexpense.app.data.MerchantAliasRepository.saveAlias(rememberAliasRawMerchant, rememberAliasDisplayName)
                         }
@@ -3234,10 +3348,12 @@ fun ReceiptsLedgerScreen(
             dynamicSources = dynamicSources,
             onClose = { showFilterSheet = false },
             onReset = {
+                AppHaptic.trigger(context)
                 viewModel.resetFilters()
                 showFilterSheet = false
             },
             onApply = { df, catOpt, srcOpt, minAmt, maxAmt ->
+                AppHaptic.trigger(context)
                 if (df != null) viewModel.setDateFilter(df.startMs, df.endMs, df.label) else viewModel.clearDateFilter()
                 viewModel.setCategoryFilter(catOpt)
                 viewModel.setSourceFilter(srcOpt)
@@ -3307,6 +3423,7 @@ fun NeedsReviewScreen(
                 if (reviewTxns.isNotEmpty()) {
                     Button(
                         onClick = {
+                            AppHaptic.trigger(context)
                             viewModel.approveAll {
                                 scope.launch {
                                     showSuccessAnimation = true
@@ -3370,6 +3487,7 @@ fun NeedsReviewScreen(
                                         }
                                     },
                                     onConfirm = { selectedCat ->
+                                        AppHaptic.trigger(context)
                                         viewModel.confirmTransaction(t.id, selectedCat) {
                                             scope.launch {
                                                 showSuccessAnimation = true
@@ -4056,7 +4174,8 @@ fun DeviceReliabilityGuidanceCard(isHealthy: Boolean) {
 @Composable
 fun ProfileScreen(
     viewModel: ProfileViewModel,
-    onNavigateBack: () -> Unit
+    onNavigateBack: () -> Unit,
+    onNavigateToSettings: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -4130,8 +4249,23 @@ fun ProfileScreen(
                 "Profile",
                 fontWeight = FontWeight.Bold,
                 color = ColorText1,
-                fontSize = 18.sp
+                fontSize = 18.sp,
+                modifier = Modifier.weight(1f)
             )
+            IconButton(
+                onClick = {
+                    AppHaptic.trigger(context)
+                    onNavigateToSettings()
+                },
+                modifier = Modifier.size(36.dp)
+            ) {
+                Icon(
+                    Icons.Outlined.Settings,
+                    contentDescription = "Settings",
+                    tint = ColorText1,
+                    modifier = Modifier.size(22.dp)
+                )
+            }
         }
 
         Column(modifier = Modifier.padding(16.dp)) {
@@ -4276,11 +4410,32 @@ fun ProfileScreen(
                             }
                         }
                     }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+                    HorizontalDivider(color = ColorBg3, modifier = Modifier.padding(bottom = 10.dp))
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                AppHaptic.trigger(context)
+                                onNavigateToSettings()
+                            }
+                            .padding(vertical = 4.dp)
+                    ) {
+                        Icon(Icons.Outlined.Settings, contentDescription = null, tint = ColorOrange, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            "Manage in Settings -> Payment Detection",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = ColorOrange,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Icon(Icons.Outlined.ArrowForwardIos, contentDescription = null, tint = ColorOrange, modifier = Modifier.size(12.dp))
+                    }
                 }
             }
-
-            // Compact dynamic manufacturer guidance shown ONLY when notification access is disabled OR listener is genuinely unhealthy
-            DeviceReliabilityGuidanceCard(isHealthy = isOverallHealthy)
 
             Spacer(modifier = Modifier.height(20.dp))
             if (BuildConfig.DEBUG) {

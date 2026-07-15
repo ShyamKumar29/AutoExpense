@@ -125,8 +125,8 @@ class BudgetRepository(private val dao: BudgetDao) {
             // Before = after minus this expense (floor at 0)
             val spentBefore = maxOf(0.0, spentAfter - amount)
 
-            val levelAfter  = computeLevel(spentAfter,  budget.limitAmount)
-            val levelBefore = computeLevel(spentBefore, budget.limitAmount)
+            val levelAfter  = computeLevel(spentAfter,  budget.limitAmount, budget.warningThreshold)
+            val levelBefore = computeLevel(spentBefore, budget.limitAmount, budget.warningThreshold)
 
             val shouldWarn = when {
                 levelAfter == BudgetLevel.EXCEEDED -> true  // always warn for every new excess

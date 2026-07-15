@@ -36,7 +36,7 @@ class BudgetViewModel : ViewModel() {
         budgetList.map { budget ->
             val spent = repo.getSpentAmount(budget.category, budget.periodType)
             val pct   = if (budget.limitAmount > 0) (spent / budget.limitAmount).toFloat() else 0f
-            val level = computeLevel(spent, budget.limitAmount)
+            val level = computeLevel(spent, budget.limitAmount, budget.warningThreshold)
             BudgetWithSpending(
                 budget     = budget,
                 spent      = spent,
@@ -65,6 +65,7 @@ class BudgetViewModel : ViewModel() {
                 category    = category,
                 periodType  = periodType,
                 limitAmount = limitAmount,
+                warningThreshold = BudgetRepositorySingleton.currentWarningThreshold,
                 existingId  = existingId
             )
             onResult(result)
@@ -82,6 +83,7 @@ class BudgetViewModel : ViewModel() {
  */
 object BudgetRepositorySingleton {
     lateinit var instance: BudgetRepository
+    var currentWarningThreshold: Double = 0.70
 
     fun init(repo: BudgetRepository) {
         instance = repo

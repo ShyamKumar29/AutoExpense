@@ -280,6 +280,27 @@ object NotificationHealthRepository {
         }
     }
 
+    enum class BackgroundDetectionStatus {
+        REQUIRED,
+        RECOMMENDED,
+        COMPLETED
+    }
+
+    fun getBackgroundDetectionStatus(
+        context: Context,
+        isPaymentSetupCompleted: Boolean = false
+    ): BackgroundDetectionStatus {
+        val notificationEnabled = isNotificationListenerEnabled(context)
+        if (!notificationEnabled) {
+            return BackgroundDetectionStatus.REQUIRED
+        }
+        val batteryExempt = isIgnoringBatteryOptimizations(context)
+        if (batteryExempt || isPaymentSetupCompleted) {
+            return BackgroundDetectionStatus.COMPLETED
+        }
+        return BackgroundDetectionStatus.RECOMMENDED
+    }
+
     private fun saveLong(context: Context, key: String, value: Long) {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         prefs.edit().putLong(key, value).apply()
