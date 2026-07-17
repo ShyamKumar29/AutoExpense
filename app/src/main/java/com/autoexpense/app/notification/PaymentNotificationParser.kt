@@ -82,10 +82,18 @@ object PaymentNotificationParser {
         "acct debited",
         "account debited",
         "ac debited",
+        "debited from",
+        "has been debited",
+        "is debited",
+        "debit of",
         "trf to",
         "transferred to",
         "transfer to",
+        "paid to",
         "spent",
+        "spent on",
+        "spent at",
+        "spent using",
         "purchase of",
         "transaction of",
         "txn of"
@@ -107,6 +115,11 @@ object PaymentNotificationParser {
     // Note: {N}? is a valid lazy quantifier in Java/Kotlin regex; avoid {N?} (invalid).
     private val DEBIT_PHRASE_AMOUNT = Regex(
         """debited\s+(?:by|for|with)\s+(?:₹\s*|Rs\.?\s*|INR\s*)?([\d,]{1,10}(?:\.\d{1,2})?)(?!\d)""",
+        RegexOption.IGNORE_CASE
+    )
+
+    private val BANK_ACTION_AMOUNT = Regex(
+        """(?:debited\s+from|has\s+been\s+debited|is\s+debited|debit\s+of|spent(?:\s+(?:on|at|using))?|purchase\s+of|transaction\s+of|txn\s+of)\s+(?:[A-Za-z/.*Xx\d\s-]{0,30}?\s+)?(?:by\s+|for\s+|of\s+)?(?:₹\s*|Rs\.?\s*|INR\s*)?([\d,]{1,10}(?:\.\d{1,2})?)(?!\d)""",
         RegexOption.IGNORE_CASE
     )
 
@@ -132,6 +145,13 @@ object PaymentNotificationParser {
         """(?:trf|transfer(?:red)?)\s+to\s+([A-Za-z0-9][A-Za-z0-9\s.\-_@]{0,49}?)""" +
         """(?=\s*(?:refno|ref\s*no|reference|utr|upi\s*ref|txn\s*id|transaction\s*id""" +
         """|on\s+date|if\s+not|call\b|for\b)|\s*\d{6,}|\s*$)""",
+        RegexOption.IGNORE_CASE
+    )
+
+    private val BANK_TO_RECIPIENT = Regex(
+        """(?:paid\s+to|sent\s+to|to)\s+([A-Za-z0-9][A-Za-z0-9\s.\-_@]{0,49}?)""" +
+        """(?=\s*(?:refno|ref\s*no|reference|utr|upi\s*ref|txn\s*id|transaction\s*id""" +
+        """|on\s+date|if\s+not|call\b|for\b|upi\b)|\s*\d{6,}|\s*$)""",
         RegexOption.IGNORE_CASE
     )
 
@@ -176,6 +196,41 @@ object PaymentNotificationParser {
             parseBankSms(fullText, lower, packageName, timestamp)
         } else {
             parseUpiApp(fullText, lower, packageName, knownSource, timestamp)
+        }
+    }
+
+    internal fun rejectionReason(
+        title: String,
+        body: String,
+        packageName: String
+    ): String {
+        val fullText = buildString {
+            if (title.isNotBlank()) { append(title.trim()); append(" ") }
+            if (body.isNotBlank()) append(body.trim())
+        }.trim()
+        if (fullText.isBlank()) return "blank_text"
+
+        val lower = fullText.lowercase()
+        IGNORE_PHRASES.firstOrNull { lower.contains(it) }?.let {
+            return "ignored_${reasonToken(it)}"
+        }
+
+        return if (SupportedPaymentSources.isMessagingApp(packageName)) {
+            if (BANK_DEBIT_PHRASES.none { lower.contains(it) }) {
+                "bank_sms_no_debit_phrase"
+            } else if (extractAmountBankSms(fullText) == null) {
+                "bank_sms_no_amount"
+            } else {
+                "bank_sms_unknown_rejection"
+            }
+        } else {
+            if (UPI_OUTGOING_PHRASES.none { lower.contains(it) }) {
+                "upi_no_outgoing_phrase"
+            } else if (extractAmount(fullText) == null) {
+                "upi_no_amount"
+            } else {
+                "upi_unknown_rejection"
+            }
         }
     }
 
@@ -290,7 +345,14 @@ object PaymentNotificationParser {
             if (value != null && value > 0) return value
         }
 
-        // Priority 2 – currency-prefixed amount anywhere in the text
+        // Priority 2 – alternate bank debit/spend wording with a nearby amount
+        BANK_ACTION_AMOUNT.find(text)?.let { m ->
+            val raw = m.groupValues[1].replace(",", "")
+            val value = raw.toDoubleOrNull()
+            if (value != null && value > 0) return value
+        }
+
+        // Priority 3 – currency-prefixed amount anywhere in the text
         AMOUNT_WITH_CURRENCY.find(text)?.let { m ->
             val raw = m.groupValues[1].ifEmpty { m.groupValues[2] }
             if (raw.isNotEmpty()) {
@@ -326,6 +388,10 @@ object PaymentNotificationParser {
             val c = m.groupValues[1].trim()
             if (isValidMerchantName(c)) return c
         }
+        BANK_TO_RECIPIENT.find(text)?.let { m ->
+            val c = m.groupValues[1].trim()
+            if (isValidMerchantName(c)) return c
+        }
         return null
     }
 
@@ -340,6 +406,11 @@ object PaymentNotificationParser {
 
     internal fun extractBankRef(text: String): String? =
         BANK_REF_NO.find(text)?.groupValues?.get(1)
+
+    private fun reasonToken(phrase: String): String =
+        phrase.lowercase()
+            .replace(Regex("""[^a-z0-9]+"""), "_")
+            .trim('_')
 
     /** ≤80-char excerpt with account masks and long numbers replaced. */
     internal fun maskedExcerpt(text: String): String {

@@ -7,7 +7,6 @@ import android.service.notification.StatusBarNotification
 import android.util.Log
 import com.autoexpense.app.BuildConfig
 import com.autoexpense.app.Transaction
-import com.autoexpense.app.TransactionRepository
 import kotlinx.coroutines.launch
 
 /**
@@ -21,7 +20,6 @@ import kotlinx.coroutines.launch
 object NotificationProcessor {
 
     private const val TAG = "AutoExpenseNotification"
-    private const val DEDUP_WINDOW_MS = 5 * 60 * 1000L  // 5 minutes
 
     // Financial keywords that reliably indicate an outgoing bank debit.
     // Used to rank candidates: a candidate containing any of these is tried
@@ -37,11 +35,13 @@ object NotificationProcessor {
         return FINANCIAL_KEYWORDS.any { lower.contains(it) }
     }
 
-    @Volatile private var fingerprintMap = java.util.concurrent.ConcurrentHashMap<String, Long>()
-
     // ── Real notification path ────────────────────────────────────────────────
 
-    fun process(sbn: StatusBarNotification, context: android.content.Context? = null) {
+    fun process(
+        sbn: StatusBarNotification,
+        context: android.content.Context? = null,
+        isRecoverySweep: Boolean = false
+    ) {
         val packageName = sbn.packageName
         if (packageName.isNullOrBlank()) {
             if (BuildConfig.DEBUG) Log.d(TAG, "DROPPED reason=null_or_blank_package")
@@ -72,11 +72,13 @@ object NotificationProcessor {
         val isKnown = SupportedPaymentSources.isKnownSource(packageName)
         val isMessaging = SupportedPaymentSources.isMessagingApp(packageName)
         if (!isKnown && !isMessaging) {
-            if (BuildConfig.DEBUG) Log.d(TAG, "FILTERED pkg=$packageName id=$id reason=unknown_source_package")
+            if (BuildConfig.DEBUG) {
+                Log.d(TAG, "FILTERED pkg=$packageName id=$id recovery=$isRecoverySweep reason=unknown_source_package")
+            }
             return
         }
         if (BuildConfig.DEBUG) {
-            Log.d(TAG, "SOURCE_PASSED pkg=$packageName id=$id isKnown=$isKnown isMessaging=$isMessaging")
+            Log.d(TAG, "SOURCE_PASSED pkg=$packageName id=$id recovery=$isRecoverySweep isKnown=$isKnown isMessaging=$isMessaging")
         }
 
         // ── Text extraction ──────────────────────────────────────────────────
@@ -169,18 +171,21 @@ object NotificationProcessor {
 
         if (BuildConfig.DEBUG) {
             Log.d(TAG, "RECEIVED pkg=$packageName id=$id " +
+                "recovery=$isRecoverySweep " +
                 "candidates=${bodies.size} " +
                 "financialCandidates=${bodies.count { hasFinancialKeyword(it) }} " +
                 "longestLen=${bodies.firstOrNull()?.length ?: 0}")
         }
 
         if (bodies.isEmpty()) {
-            if (BuildConfig.DEBUG) Log.d(TAG, "DROPPED pkg=$packageName id=$id reason=no_body_candidates")
+            if (BuildConfig.DEBUG) {
+                Log.d(TAG, "DROPPED pkg=$packageName id=$id recovery=$isRecoverySweep reason=no_body_candidates")
+            }
             return
         }
 
         for (body in bodies) {
-            processRawNotification(title, body, packageName, sbn.postTime, id, context)
+            processRawNotification(title, body, packageName, sbn.postTime, id, context, isRecoverySweep)
         }
     }
 
@@ -198,10 +203,13 @@ object NotificationProcessor {
         packageName: String,
         timestamp: Long,
         notificationId: Int,
-        context: android.content.Context? = null
+        context: android.content.Context? = null,
+        isRecoverySweep: Boolean = false
     ) {
+        val parserPath = if (SupportedPaymentSources.isMessagingApp(packageName)) "bank_sms" else "upi_app"
         if (BuildConfig.DEBUG) {
             Log.d(TAG, "PARSER_REACHED pkg=$packageName id=$notificationId " +
+                "path=$parserPath recovery=$isRecoverySweep " +
                 "bodyLen=${body.length} titleLen=${title.length} " +
                 "hasFinancial=${hasFinancialKeyword(body)}")
         }
@@ -215,116 +223,26 @@ object NotificationProcessor {
 
         if (payment == null) {
             if (BuildConfig.DEBUG) {
-                Log.d(TAG, "PARSER_REJECTED pkg=$packageName id=$notificationId")
+                Log.d(TAG, "PARSER_REJECTED pkg=$packageName id=$notificationId " +
+                    "path=$parserPath recovery=$isRecoverySweep " +
+                    "reason=${PaymentNotificationParser.rejectionReason(title, body, packageName)}")
             }
             return
         }
 
         kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
-            if (isDuplicate(payment)) {
-                if (BuildConfig.DEBUG) {
-                    Log.d(TAG, "DUPLICATE pkg=$packageName id=$notificationId")
-                }
-                return@launch
-            }
-
             if (BuildConfig.DEBUG) {
                 Log.d(TAG, "ACCEPTED pkg=$packageName id=$notificationId " +
-                    "amt=${payment.amount} merchant=${payment.merchantOrRecipient} source=${payment.sourceApplication}")
+                    "path=$parserPath recovery=$isRecoverySweep " +
+                    "amt=${payment.amount} merchantLen=${payment.merchantOrRecipient.length} source=${payment.sourceApplication}")
             }
 
-            try {
-                TransactionRepository.addTransactionEntity(convertToTransactionEntity(payment))
-                if (BuildConfig.DEBUG) {
-                    Log.d(TAG, "INSERTED pkg=$packageName id=$notificationId txnId=${payment.id}")
-                }
-                if (context != null) {
-                    NotificationHealthRepository.recordPaymentDetected(context, payment.timestamp)
-                }
-            } catch (e: Exception) {
-                if (BuildConfig.DEBUG) {
-                    Log.e(TAG, "INSERT_FAILED pkg=$packageName id=$notificationId", e)
-                }
-            }
+            PaymentIngestion.ingestParsedPayment(
+                payment = payment,
+                context = context,
+                origin = if (isRecoverySweep) "notification_recovery" else "notification",
+                sourceId = "$packageName#$notificationId"
+            )
         }
-    }
-
-    private suspend fun isDuplicate(payment: ParsedPayment): Boolean {
-        val now = System.currentTimeMillis()
-
-        // Tier 1 – bank reference number
-        val fingerprint1 = if (!payment.bankRefNumber.isNullOrBlank()) {
-            "ref|${payment.bankRefNumber}"
-        } else null
-
-        if (fingerprint1 != null) {
-            val lastSeen = fingerprintMap[fingerprint1]
-            if (lastSeen != null && (now - lastSeen) < DEDUP_WINDOW_MS) return true
-            fingerprintMap[fingerprint1] = now
-            if (TransactionRepository.existsByFingerprint(fingerprint1)) return true
-        }
-
-        // Tier 2 – normalized amount + recipient + bank
-        val normalizedRecipient = payment.merchantOrRecipient.lowercase().replace(Regex("\\s+"), "")
-        val bank = KnownBanks.detect(payment.sourceApplication)?.shortName
-            ?: payment.sourcePackage.take(8)
-        val tier2Key = "t2|${payment.amount}|$normalizedRecipient|$bank"
-        
-        val lastSeen2 = fingerprintMap[tier2Key]
-        if (lastSeen2 != null && (now - lastSeen2) < DEDUP_WINDOW_MS) return true
-        fingerprintMap[tier2Key] = now
-        
-        if (TransactionRepository.existsByFingerprint(tier2Key)) return true
-
-        // Prune expired entries
-        fingerprintMap.entries.removeIf { (_, v) -> (now - v) > DEDUP_WINDOW_MS }
-
-        return false
-    }
-
-    private fun getPrimaryFingerprint(payment: ParsedPayment): String {
-        if (!payment.bankRefNumber.isNullOrBlank()) {
-            return "ref|${payment.bankRefNumber}"
-        }
-        val normalizedRecipient = payment.merchantOrRecipient.lowercase().replace(Regex("\\s+"), "")
-        val bank = KnownBanks.detect(payment.sourceApplication)?.shortName
-            ?: payment.sourcePackage.take(8)
-        return "t2|${payment.amount}|$normalizedRecipient|$bank"
-    }
-
-    private fun convertToTransactionEntity(payment: ParsedPayment): com.autoexpense.app.data.TransactionEntity {
-        val source = SupportedPaymentSources.findSource(payment.sourcePackage)
-            ?.takeIf { !it.isMessaging }
-            ?.shortName
-            ?: KnownBanks.detect(payment.sourceApplication)?.shortName
-            ?: "banksms"
-
-        val amountStr = if (payment.amount % 1.0 == 0.0) {
-            "−₹${String.format(java.util.Locale.US, "%,.0f", payment.amount)}"
-        } else {
-            "−₹${String.format(java.util.Locale.US, "%,.2f", payment.amount)}"
-        }
-
-        val rawMerchant = payment.merchantOrRecipient
-        val cleanedMerchant = SmartMerchantCleaner.cleanMerchant(rawMerchant)
-
-        return com.autoexpense.app.data.TransactionEntity(
-            id = payment.id,
-            merchantOrRecipient = cleanedMerchant,
-            sub = payment.sourceApplication,
-            amount = amountStr,
-            currency = "INR",
-            source = source,
-            category = "❓ Unknown",
-            status = "review",
-            timestamp = payment.timestamp,
-            confidence = 1.0f,
-            detectionReason = payment.detectionReason,
-            safeNotificationExcerpt = payment.safeNotificationExcerpt,
-            transactionFingerprint = getPrimaryFingerprint(payment),
-            createdAt = System.currentTimeMillis(),
-            updatedAt = System.currentTimeMillis(),
-            rawMerchant = rawMerchant
-        )
     }
 }

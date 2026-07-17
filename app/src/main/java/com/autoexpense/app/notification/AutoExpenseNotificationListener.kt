@@ -1,6 +1,7 @@
 package com.autoexpense.app.notification
 
 import android.os.Build
+import android.content.ComponentName
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import android.util.Log
@@ -29,6 +30,7 @@ class AutoExpenseNotificationListener : NotificationListenerService() {
         serviceScope.launch {
             NotificationHealthRepository.recordServiceConnected(applicationContext)
         }
+        processActiveNotifications("connected")
     }
 
     override fun onListenerDisconnected() {
@@ -39,22 +41,27 @@ class AutoExpenseNotificationListener : NotificationListenerService() {
         serviceScope.launch {
             NotificationHealthRepository.recordServiceDisconnected(applicationContext)
         }
+        requestSystemRebind()
     }
 
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
+        handlePostedNotification(sbn, "posted")
+    }
+
+    private fun handlePostedNotification(sbn: StatusBarNotification?, reason: String) {
         if (sbn == null) {
             if (BuildConfig.DEBUG) {
-                Log.d(TAG, "onNotificationPosted: sbn was null, ignoring")
+                Log.d(TAG, "handlePostedNotification reason=$reason sbn=null")
             }
             return
         }
         if (BuildConfig.DEBUG) {
-            Log.d(TAG, "onNotificationPosted pkg=${sbn.packageName}")
+            Log.d(TAG, "handlePostedNotification reason=$reason pkg=${sbn.packageName}")
         }
 
         if (sbn.id == NotificationHealthRepository.TEST_NOTIFICATION_ID && sbn.packageName == applicationContext.packageName) {
             if (BuildConfig.DEBUG) {
-                Log.d(TAG, "onNotificationPosted: test notification detected")
+                Log.d(TAG, "handlePostedNotification: test notification detected")
             }
             NotificationHealthRepository.recordNotificationHeartbeat(applicationContext)
             NotificationHealthRepository.onTestNotificationDetected()
@@ -76,7 +83,43 @@ class AutoExpenseNotificationListener : NotificationListenerService() {
 
         serviceScope.launch {
             NotificationHealthRepository.recordNotificationHeartbeat(applicationContext)
-            NotificationProcessor.process(sbn, applicationContext)
+            NotificationProcessor.process(sbn, applicationContext, isRecoverySweep = reason != "posted")
+        }
+    }
+
+    private fun processActiveNotifications(reason: String) {
+        val active = try {
+            activeNotifications ?: emptyArray()
+        } catch (e: Exception) {
+            if (BuildConfig.DEBUG) {
+                Log.d(TAG, "active notification sweep failed reason=$reason", e)
+            }
+            emptyArray()
+        }
+
+        if (BuildConfig.DEBUG) {
+            Log.d(TAG, "active notification sweep reason=$reason count=${active.size}")
+        }
+
+        for (sbn in active) {
+            handlePostedNotification(sbn, "active_$reason")
+        }
+    }
+
+    private fun requestSystemRebind() {
+        try {
+            val componentName = ComponentName(
+                applicationContext,
+                AutoExpenseNotificationListener::class.java
+            )
+            NotificationListenerService.requestRebind(componentName)
+            if (BuildConfig.DEBUG) {
+                Log.d(TAG, "requestRebind submitted")
+            }
+        } catch (e: Exception) {
+            if (BuildConfig.DEBUG) {
+                Log.d(TAG, "requestRebind failed", e)
+            }
         }
     }
 

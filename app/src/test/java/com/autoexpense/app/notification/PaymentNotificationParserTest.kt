@@ -13,6 +13,7 @@ class PaymentNotificationParserTest {
     private val phonePePkg   = "com.phonepe.app"
     private val paytmPkg     = "net.one97.paytm"
     private val messagesPkg  = "com.google.android.apps.messaging"
+    private val truecallerPkg = "com.truecaller"
     private val unknownPkg   = "com.unknown.app"
     private val ts           = System.currentTimeMillis()
 
@@ -437,5 +438,114 @@ class PaymentNotificationParserTest {
             assertEquals("JOTHIRAMAN K", r.merchantOrRecipient)
             assertTrue(r.sourceApplication.contains("SBI"))
         }
+    }
+
+    @Test
+    fun truecaller_parses_when_bank_sender_is_title() {
+        val body = "A/C X4511 debited by 2.00 on date 13Jul26 trf to B Sujatha Refno 619455206609"
+        val r = PaymentNotificationParser.parse("SBI", body, truecallerPkg, ts)
+        assertNotNull(r)
+        assertEquals(2.0, r!!.amount, 0.001)
+        assertEquals("B Sujatha", r.merchantOrRecipient)
+        assertTrue(r.sourceApplication.contains("SBI"))
+    }
+
+    @Test
+    fun truecaller_parses_hdfc_debited_from_format() {
+        val body = "A/C XX1234 debited from HDFC Bank by Rs. 500.00 paid to Amazon UPI Ref no 123456789012"
+        val r = PaymentNotificationParser.parse("HDFC Bank", body, truecallerPkg, ts)
+        assertNotNull(r)
+        assertEquals(500.0, r!!.amount, 0.001)
+        assertEquals("Amazon", r.merchantOrRecipient)
+        assertTrue(r.sourceApplication.contains("HDFC"))
+        assertEquals("123456789012", r.bankRefNumber)
+    }
+
+    @Test
+    fun truecaller_parses_icici_debit_of_format() {
+        val body = "Debit of INR 349.00 from ICICI Bank Acct XX9876 paid to NETFLIX UTR 654321987654"
+        val r = PaymentNotificationParser.parse("ICICI Bank", body, truecallerPkg, ts)
+        assertNotNull(r)
+        assertEquals(349.0, r!!.amount, 0.001)
+        assertEquals("NETFLIX", r.merchantOrRecipient)
+        assertTrue(r.sourceApplication.contains("ICICI"))
+        assertEquals("654321987654", r.bankRefNumber)
+    }
+
+    @Test
+    fun truecaller_parses_unknown_merchant_when_debit_is_valid() {
+        val body = "SBI A/C X4511 has been debited by Rs. 725.00 Refno 619455206610"
+        val r = PaymentNotificationParser.parse("SBI", body, truecallerPkg, ts)
+        assertNotNull(r)
+        assertEquals(725.0, r!!.amount, 0.001)
+        assertEquals("Unknown Merchant", r.merchantOrRecipient)
+        assertEquals(PaymentConfidence.MEDIUM, r.confidence)
+    }
+
+    @Test
+    fun parser_rejectionReason_does_not_include_raw_body() {
+        val body = "OTP 123456 for your SBI transaction"
+        val reason = PaymentNotificationParser.rejectionReason("SBI", body, truecallerPkg)
+        assertEquals("ignored_otp", reason)
+        assertFalse(reason.contains("123456"))
+        assertFalse(reason.contains("SBI"))
+    }
+
+    @Test
+    fun directSms_parses_bank_debit_alert() {
+        val body = "Dear UPI user A/C X4511 debited by 250.00 trf to BIG BASKET Refno 619455206611 SBI"
+        val r = PaymentNotificationParser.parse("SBI", body, PaymentIngestion.DIRECT_SMS_PACKAGE, ts)
+        assertNotNull(r)
+        assertEquals(250.0, r!!.amount, 0.001)
+        assertEquals("BIG BASKET", r.merchantOrRecipient)
+        assertEquals("619455206611", r.bankRefNumber)
+        assertTrue(r.sourceApplication.contains("SBI"))
+    }
+
+    @Test
+    fun directSms_rejects_nonFinancialSms() {
+        val body = "Your delivery OTP is 123456"
+        assertNull(PaymentNotificationParser.parse("SHOP", body, PaymentIngestion.DIRECT_SMS_PACKAGE, ts))
+    }
+
+    @Test
+    fun directSms_and_notification_use_same_ref_fingerprint() {
+        val body = "A/C X4511 debited by 250.00 trf to BIG BASKET Refno 619455206611 SBI"
+        val fromSms = PaymentNotificationParser.parse("SBI", body, PaymentIngestion.DIRECT_SMS_PACKAGE, ts)
+        val fromNotification = PaymentNotificationParser.parse("SBI", body, truecallerPkg, ts)
+
+        assertNotNull(fromSms)
+        assertNotNull(fromNotification)
+        assertEquals(
+            PaymentIngestion.fingerprintFor(fromNotification!!),
+            PaymentIngestion.fingerprintFor(fromSms!!)
+        )
+    }
+
+    @Test
+    fun sameRecipientSameAmount_differentRefno_haveDifferentFingerprints() {
+        val first = PaymentNotificationParser.parse(
+            "JK-SBIUPI-S",
+            "Dear UPI user A/C X4511 debited by 1.00 on date 17Jul26 trf to B Sujatha Refno 619853467030 If not u? call-1800111109 for other services-18001234-SBI",
+            PaymentIngestion.DIRECT_SMS_PACKAGE,
+            ts
+        )
+        val second = PaymentNotificationParser.parse(
+            "JD-SBIUPI-S",
+            "Dear UPI user A/C X4511 debited by 1.00 on date 17Jul26 trf to B Sujatha Refno 619853415880 If not u? call-1800111109 for other services-18001234-SBI",
+            PaymentIngestion.DIRECT_SMS_PACKAGE,
+            ts + 30_000
+        )
+
+        assertNotNull(first)
+        assertNotNull(second)
+        assertEquals("B Sujatha", first!!.merchantOrRecipient)
+        assertEquals("B Sujatha", second!!.merchantOrRecipient)
+        assertEquals("619853467030", first.bankRefNumber)
+        assertEquals("619853415880", second.bankRefNumber)
+        assertNotEquals(
+            PaymentIngestion.fingerprintFor(first),
+            PaymentIngestion.fingerprintFor(second)
+        )
     }
 }

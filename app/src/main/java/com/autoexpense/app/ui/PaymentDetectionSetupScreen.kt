@@ -1,5 +1,6 @@
 package com.autoexpense.app.ui
 
+import android.Manifest
 import android.content.ActivityNotFoundException
 import android.content.ComponentName
 import android.content.Context
@@ -7,6 +8,8 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -38,6 +41,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import com.autoexpense.app.*
 import com.autoexpense.app.notification.NotificationHealthRepository
+import com.autoexpense.app.notification.SmsPaymentScanner
 import kotlinx.coroutines.launch
 
 @Composable
@@ -58,6 +62,20 @@ fun PaymentDetectionSetupScreen(
     var isBatteryExempt by remember {
         mutableStateOf(NotificationHealthRepository.isIgnoringBatteryOptimizations(context))
     }
+    var isSmsAccessEnabled by remember {
+        mutableStateOf(SmsPaymentScanner.hasSmsPermission(context))
+    }
+
+    val smsPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestMultiplePermissions()
+    ) { permissions ->
+        val granted = permissions[Manifest.permission.READ_SMS] == true &&
+            permissions[Manifest.permission.RECEIVE_SMS] == true
+        isSmsAccessEnabled = granted || SmsPaymentScanner.hasSmsPermission(context)
+        if (isSmsAccessEnabled) {
+            scope.launch { SmsPaymentScanner.scanRecent(context) }
+        }
+    }
 
     // Refresh states when resuming the screen after user returns from Android settings
     DisposableEffect(lifecycleOwner) {
@@ -65,6 +83,10 @@ fun PaymentDetectionSetupScreen(
             if (event == Lifecycle.Event.ON_RESUME) {
                 isNotificationAccessEnabled = NotificationHealthRepository.isNotificationListenerEnabled(context)
                 isBatteryExempt = NotificationHealthRepository.isIgnoringBatteryOptimizations(context)
+                isSmsAccessEnabled = SmsPaymentScanner.hasSmsPermission(context)
+                if (isSmsAccessEnabled) {
+                    scope.launch { SmsPaymentScanner.scanRecent(context) }
+                }
                 if (isNotificationAccessEnabled && isBatteryExempt) {
                     scope.launch { userPrefs.completePaymentSetup() }
                 }
@@ -149,7 +171,7 @@ fun PaymentDetectionSetupScreen(
 
         Column(modifier = Modifier.padding(16.dp)) {
             Text(
-                text = "AutoExpense needs notification access and permission to work in the background so payments can be detected while the app is closed.",
+                text = "AutoExpense uses payment notifications first. Optional SMS access can recover bank debit messages when the SMS app or Truecaller does not show a notification.",
                 fontSize = 14.sp,
                 color = ColorText2,
                 modifier = Modifier.padding(bottom = 20.dp),
@@ -225,6 +247,93 @@ fun PaymentDetectionSetupScreen(
                                 fontSize = 14.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = Color.White
+                            )
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(14.dp))
+
+            // ── OPTIONAL SMS FALLBACK ────────────────────────────────────────
+            Card(
+                colors = CardDefaults.cardColors(containerColor = ColorBg2),
+                shape = RoundedCornerShape(12.dp),
+                border = BorderStroke(1.dp, if (isSmsAccessEnabled) ColorGreen.copy(alpha = 0.5f) else ColorBg3),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            Icons.Outlined.Notifications,
+                            contentDescription = null,
+                            tint = if (isSmsAccessEnabled) ColorGreen else ColorOrange,
+                            modifier = Modifier.size(22.dp)
+                        )
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Text(
+                            text = "SMS Payment Fallback",
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = ColorText1,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = "Optional. AutoExpense reads bank debit SMS locally to detect payments when no SMS or Truecaller notification appears. It stores only parsed transaction details and masked excerpts.",
+                        fontSize = 13.sp,
+                        color = ColorText2,
+                        lineHeight = 18.sp
+                    )
+
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "No unrelated SMS content is saved, uploaded, sold, or used for ads.",
+                        fontSize = 12.sp,
+                        color = ColorText3,
+                        lineHeight = 17.sp
+                    )
+
+                    Spacer(modifier = Modifier.height(14.dp))
+                    if (isSmsAccessEnabled) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                Icons.Default.CheckCircle,
+                                contentDescription = null,
+                                tint = ColorGreen,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = "SMS fallback enabled",
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = ColorGreen
+                            )
+                        }
+                    } else {
+                        OutlinedButton(
+                            onClick = {
+                                AppHaptic.trigger(context)
+                                smsPermissionLauncher.launch(
+                                    arrayOf(
+                                        Manifest.permission.READ_SMS,
+                                        Manifest.permission.RECEIVE_SMS
+                                    )
+                                )
+                            },
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = ColorOrange),
+                            border = BorderStroke(1.dp, ColorOrange),
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.fillMaxWidth().height(44.dp)
+                        ) {
+                            Text(
+                                text = "Enable SMS Fallback",
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = ColorOrange
                             )
                         }
                     }
