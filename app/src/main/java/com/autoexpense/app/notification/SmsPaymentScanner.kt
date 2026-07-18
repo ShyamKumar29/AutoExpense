@@ -9,13 +9,16 @@ import androidx.core.content.ContextCompat
 import com.autoexpense.app.BuildConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.security.MessageDigest
 
 object SmsPaymentScanner {
     private const val TAG = "AutoExpenseSmsScanner"
     private const val PREFS_NAME = "autoexpense_sms_detection_prefs"
+    private const val KEY_FIRST_ENABLED_AT = "first_enabled_at"
     private const val KEY_LAST_SCAN_TIME = "last_scan_time"
-    private const val INITIAL_LOOKBACK_MS = 3L * 24L * 60L * 60L * 1000L
+    private const val KEY_PROCESSED_SMS = "processed_sms_keys"
     private const val MAX_ROWS_PER_SCAN = 250
+    private const val MAX_PROCESSED_KEYS = 5000
 
     fun hasSmsPermission(context: Context): Boolean {
         val readGranted = ContextCompat.checkSelfPermission(
@@ -37,13 +40,31 @@ object SmsPaymentScanner {
 
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val now = System.currentTimeMillis()
+        val firstEnabledAt = prefs.getLong(KEY_FIRST_ENABLED_AT, 0L)
         val lastScan = prefs.getLong(KEY_LAST_SCAN_TIME, 0L)
-        val since = if (lastScan > 0L) lastScan else now - INITIAL_LOOKBACK_MS
+        if (firstEnabledAt <= 0L && lastScan <= 0L) {
+            prefs.edit()
+                .putLong(KEY_FIRST_ENABLED_AT, now)
+                .putLong(KEY_LAST_SCAN_TIME, now)
+                .apply()
+            if (BuildConfig.DEBUG) Log.d(TAG, "scan initialized baseline=$now inserted=0")
+            return@withContext 0
+        }
+
+        val since = when {
+            lastScan > 0L -> lastScan
+            firstEnabledAt > 0L -> firstEnabledAt
+            else -> now
+        }
+        if (firstEnabledAt <= 0L) {
+            prefs.edit().putLong(KEY_FIRST_ENABLED_AT, since).apply()
+        }
 
         var inserted = 0
         var scanned = 0
 
         val projection = arrayOf(
+            Telephony.Sms._ID,
             Telephony.Sms.ADDRESS,
             Telephony.Sms.BODY,
             Telephony.Sms.DATE
@@ -63,19 +84,28 @@ object SmsPaymentScanner {
         }
 
         cursor?.use {
+            val idIndex = it.getColumnIndexOrThrow(Telephony.Sms._ID)
             val addressIndex = it.getColumnIndexOrThrow(Telephony.Sms.ADDRESS)
             val bodyIndex = it.getColumnIndexOrThrow(Telephony.Sms.BODY)
             val dateIndex = it.getColumnIndexOrThrow(Telephony.Sms.DATE)
 
             while (it.moveToNext() && scanned < MAX_ROWS_PER_SCAN) {
                 scanned += 1
+                val smsId = it.getLong(idIndex).takeIf { value -> value > 0L }?.toString()
                 val address = it.getString(addressIndex).orEmpty()
                 val body = it.getString(bodyIndex).orEmpty()
                 val date = it.getLong(dateIndex).takeIf { value -> value > 0L } ?: now
+                val processedKey = processedKeyFor(address, body, date)
 
-                if (parseAndIngest(context, address, body, date, "inbox_scan", "row$scanned")) {
+                if (isSmsProcessed(context, processedKey)) {
+                    if (BuildConfig.DEBUG) Log.d(TAG, "sms skipped already_processed sourceId=${smsId ?: "row$scanned"}")
+                    continue
+                }
+
+                if (parseAndIngest(context, address, body, date, "inbox_scan", smsId ?: "row$scanned")) {
                     inserted += 1
                 }
+                markSmsProcessed(context, processedKey)
             }
         }
 
@@ -132,5 +162,67 @@ object SmsPaymentScanner {
             origin = origin,
             sourceId = sourceId
         )
+    }
+
+    suspend fun parseAndIngestOnce(
+        context: Context,
+        sender: String,
+        body: String,
+        timestamp: Long,
+        origin: String,
+        sourceId: String
+    ): Boolean {
+        val processedKey = processedKeyFor(sender, body, timestamp)
+        val firstEnabledAt = ensureFirstEnabledAt(context)
+        if (timestamp <= firstEnabledAt) {
+            if (BuildConfig.DEBUG) Log.d(TAG, "sms skipped before_baseline origin=$origin sourceId=$sourceId")
+            markSmsProcessed(context, processedKey)
+            return false
+        }
+        if (isSmsProcessed(context, processedKey)) {
+            if (BuildConfig.DEBUG) Log.d(TAG, "sms skipped already_processed origin=$origin sourceId=$sourceId")
+            return false
+        }
+        val inserted = parseAndIngest(context, sender, body, timestamp, origin, sourceId)
+        markSmsProcessed(context, processedKey)
+        return inserted
+    }
+
+    private fun isSmsProcessed(context: Context, key: String): Boolean {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        return prefs.getStringSet(KEY_PROCESSED_SMS, emptySet()).orEmpty().contains(key)
+    }
+
+    private fun markSmsProcessed(context: Context, key: String) {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val current = prefs.getStringSet(KEY_PROCESSED_SMS, emptySet()).orEmpty()
+        val next = LinkedHashSet<String>(current.size + 1)
+        next.addAll(current.toList().takeLast(MAX_PROCESSED_KEYS - 1))
+        next.add(key)
+        prefs.edit().putStringSet(KEY_PROCESSED_SMS, next).apply()
+    }
+
+    private fun ensureFirstEnabledAt(context: Context): Long {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val existing = prefs.getLong(KEY_FIRST_ENABLED_AT, 0L)
+        if (existing > 0L) return existing
+
+        val baseline = prefs.getLong(KEY_LAST_SCAN_TIME, 0L).takeIf { it > 0L }
+            ?: System.currentTimeMillis()
+        prefs.edit()
+            .putLong(KEY_FIRST_ENABLED_AT, baseline)
+            .putLong(KEY_LAST_SCAN_TIME, baseline)
+            .apply()
+        return baseline
+    }
+
+    private fun processedKeyFor(sender: String, body: String, timestamp: Long): String {
+        val normalizedSender = sender.lowercase().replace(Regex("""[^a-z0-9]+"""), "")
+        return "sms|$timestamp|$normalizedSender|${sha256(body)}"
+    }
+
+    private fun sha256(value: String): String {
+        val digest = MessageDigest.getInstance("SHA-256").digest(value.toByteArray(Charsets.UTF_8))
+        return digest.joinToString(separator = "") { "%02x".format(it) }
     }
 }

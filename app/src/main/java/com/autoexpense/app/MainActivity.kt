@@ -1284,8 +1284,7 @@ fun DashboardScreen(
             DashboardHeroCard(
                 totalSpent = totalSpent,
                 pendingReviewCount = pendingReviewCount,
-                monthTransactionCount = confirmedForDashboard.size,
-                transactions = confirmedForDashboard
+                monthTransactionCount = confirmedForDashboard.size
             )
 
             Spacer(modifier = Modifier.height(10.dp))
@@ -1364,16 +1363,8 @@ fun DashboardScreen(
 fun DashboardHeroCard(
     totalSpent: String,
     pendingReviewCount: Int,
-    monthTransactionCount: Int,
-    transactions: List<Transaction>
+    monthTransactionCount: Int
 ) {
-    val trendPoints = remember(transactions) { computeHeroTrendPoints(transactions) }
-    val lineProgress by animateFloatAsState(
-        targetValue = if (trendPoints.isNotEmpty()) 1f else 0f,
-        animationSpec = tween(durationMillis = 900, easing = androidx.compose.animation.core.FastOutSlowInEasing),
-        label = "heroTrendProgress"
-    )
-
     Card(
         colors = CardDefaults.cardColors(containerColor = Color.Transparent),
         shape = RoundedCornerShape(22.dp),
@@ -1396,19 +1387,7 @@ fun DashboardHeroCard(
                 .border(1.dp, ColorOrange.copy(alpha = 0.45f), RoundedCornerShape(22.dp))
                 .padding(horizontal = 22.dp, vertical = 20.dp)
         ) {
-            val showSparkline = trendPoints.isNotEmpty() && maxWidth >= 300.dp
-            if (showSparkline) {
-                HeroTrendLine(
-                    points = trendPoints,
-                    progress = lineProgress,
-                    modifier = Modifier
-                        .align(Alignment.CenterEnd)
-                        .fillMaxWidth(0.38f)
-                        .height(82.dp)
-                )
-            }
-
-            Column(modifier = Modifier.fillMaxWidth(if (showSparkline) 0.62f else 1f)) {
+            Column(modifier = Modifier.fillMaxWidth()) {
                 Text(
                     "Total Spent",
                     color = Color.White.copy(alpha = 0.78f),
@@ -1442,39 +1421,6 @@ fun DashboardHeroCard(
     }
 }
 
-private fun computeHeroTrendPoints(transactions: List<Transaction>, nowMs: Long = System.currentTimeMillis()): List<Float> {
-    val dayMs = 86400000L
-    val endMs = nowMs
-    val startMs = nowMs - (29L * dayMs)
-    val recentTxns = transactions
-        .filter { it.timestamp in startMs..endMs }
-        .sortedBy { it.timestamp }
-    val activeDays = recentTxns.map {
-        val cal = java.util.Calendar.getInstance().apply { timeInMillis = it.timestamp }
-        cal.get(java.util.Calendar.YEAR) to cal.get(java.util.Calendar.DAY_OF_YEAR)
-    }.distinct().size
-    if (recentTxns.size < 5 || activeDays < 3) return emptyList()
-
-    val startOfWindow = java.util.Calendar.getInstance().apply {
-        timeInMillis = startMs
-        set(java.util.Calendar.HOUR_OF_DAY, 0)
-        set(java.util.Calendar.MINUTE, 0)
-        set(java.util.Calendar.SECOND, 0)
-        set(java.util.Calendar.MILLISECOND, 0)
-    }.timeInMillis
-    val daily = FloatArray(30) { 0f }
-    recentTxns.forEach { transaction ->
-        val dayIndex = ((transaction.timestamp - startOfWindow) / dayMs).toInt().coerceIn(daily.indices)
-        daily[dayIndex] += DashboardViewModel.parseAmount(transaction.amount).toFloat()
-    }
-    var running = 0f
-    val cumulative = daily.map { amount ->
-        running += amount
-        running
-    }
-    return if (cumulative.distinct().size < 3 || cumulative.lastOrNull() == 0f) emptyList() else cumulative
-}
-
 @Composable
 private fun HeroMetricChip(
     icon: ImageVector,
@@ -1497,60 +1443,6 @@ private fun HeroMetricChip(
             Text(label, color = Color.White.copy(alpha = 0.84f), fontSize = 13.sp, fontWeight = FontWeight.Medium)
             Text(value, color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.Bold)
         }
-    }
-}
-
-@Composable
-private fun HeroTrendLine(
-    points: List<Float>,
-    progress: Float,
-    modifier: Modifier = Modifier
-) {
-    Canvas(modifier = modifier) {
-        if (points.size < 3) return@Canvas
-        val max = points.maxOrNull()?.takeIf { it > 0f } ?: return@Canvas
-        val min = points.minOrNull() ?: 0f
-        val range = (max - min).takeIf { it > 0f } ?: max
-        val usableW = size.width
-        val usableH = size.height * 0.72f
-        val topPad = size.height * 0.12f
-        val step = usableW / (points.size - 1).coerceAtLeast(1)
-        val offsets = points.mapIndexed { index, value ->
-            val x = index * step
-            val normalized = (value - min) / range
-            val y = topPad + usableH - (normalized * usableH)
-            Offset(x, y)
-        }
-        val visibleCount = (offsets.size * progress).toInt().coerceIn(2, offsets.size)
-        val visible = offsets.take(visibleCount)
-        val path = Path().apply {
-            moveTo(visible.first().x, visible.first().y)
-            for (i in 1 until visible.size) {
-                val previous = visible[i - 1]
-                val current = visible[i]
-                val midX = (previous.x + current.x) / 2f
-                quadraticTo(previous.x, previous.y, midX, (previous.y + current.y) / 2f)
-                quadraticTo(midX, (previous.y + current.y) / 2f, current.x, current.y)
-            }
-        }
-        val fillPath = Path().apply {
-            addPath(path)
-            lineTo(visible.last().x, size.height)
-            lineTo(visible.first().x, size.height)
-            close()
-        }
-        drawPath(
-            path = fillPath,
-            brush = Brush.verticalGradient(
-                listOf(ColorOrange.copy(alpha = 0.24f), ColorOrange.copy(alpha = 0.02f))
-            )
-        )
-        drawPath(
-            path = path,
-            color = ColorOrange,
-            style = Stroke(width = 2.5.dp.toPx(), cap = androidx.compose.ui.graphics.StrokeCap.Round)
-        )
-        drawCircle(ColorOrange, radius = 4.5.dp.toPx(), center = visible.last())
     }
 }
 
@@ -4320,6 +4212,26 @@ fun NeedsReviewScreen(
     val pendingIgnoredIds = remember { mutableStateListOf<String>() }
     val visibleReviewTxns = remember(reviewTxns, pendingIgnoredIds.toList()) {
         reviewTxns.filterNot { it.id in pendingIgnoredIds }
+    }
+    val lifecycleOwner = LocalLifecycleOwner.current
+
+    fun commitPendingIgnores() {
+        pendingIgnoredIds.toList().forEach { pendingId ->
+            viewModel.ignoreTransaction(pendingId)
+        }
+    }
+
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_STOP) {
+                commitPendingIgnores()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+            commitPendingIgnores()
+        }
     }
 
     LaunchedEffect(reviewTxns) {

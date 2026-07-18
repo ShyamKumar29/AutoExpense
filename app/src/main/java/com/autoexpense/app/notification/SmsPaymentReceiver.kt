@@ -30,7 +30,7 @@ class SmsPaymentReceiver : BroadcastReceiver() {
                     ?: System.currentTimeMillis()
                 val body = messages.joinToString(separator = "") { it.messageBody.orEmpty() }
 
-                SmsPaymentScanner.parseAndIngest(
+                SmsPaymentScanner.parseAndIngestOnce(
                     context = context.applicationContext,
                     sender = sender,
                     body = body,
