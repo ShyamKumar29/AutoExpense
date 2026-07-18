@@ -144,6 +144,8 @@ object BackupCodec {
         prefsObj.put("isSmartAutoMarkPaidEnabled", backup.data.preferences.isSmartAutoMarkPaidEnabled)
         prefsObj.put("isSmartSuggestionsEnabled", backup.data.preferences.isSmartSuggestionsEnabled)
         prefsObj.put("isSmartDashboardWidgetEnabled", backup.data.preferences.isSmartDashboardWidgetEnabled)
+        prefsObj.put("isSmartRecurringNotificationsEnabled", backup.data.preferences.isSmartRecurringNotificationsEnabled)
+        prefsObj.put("isSmartAutoPaidNotificationsEnabled", backup.data.preferences.isSmartAutoPaidNotificationsEnabled)
         dataObj.put("preferences", prefsObj)
 
         root.put("data", dataObj)
@@ -386,7 +388,9 @@ object BackupCodec {
                 isSmartAutoMatchingEnabled = prefsObj.optBoolean("isSmartAutoMatchingEnabled", true),
                 isSmartAutoMarkPaidEnabled = prefsObj.optBoolean("isSmartAutoMarkPaidEnabled", true),
                 isSmartSuggestionsEnabled = prefsObj.optBoolean("isSmartSuggestionsEnabled", true),
-                isSmartDashboardWidgetEnabled = prefsObj.optBoolean("isSmartDashboardWidgetEnabled", true)
+                isSmartDashboardWidgetEnabled = prefsObj.optBoolean("isSmartDashboardWidgetEnabled", true),
+                isSmartRecurringNotificationsEnabled = prefsObj.optBoolean("isSmartRecurringNotificationsEnabled", true),
+                isSmartAutoPaidNotificationsEnabled = prefsObj.optBoolean("isSmartAutoPaidNotificationsEnabled", true)
             )
 
             val payload = BackupPayloadDto(

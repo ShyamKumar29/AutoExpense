@@ -71,6 +71,8 @@ fun SettingsScreen(
     val smartAutoMarkPaid by userPrefs.isSmartAutoMarkPaidEnabled.collectAsState(initial = true)
     val smartSuggestions by userPrefs.isSmartSuggestionsEnabled.collectAsState(initial = true)
     val smartDashboardWidget by userPrefs.isSmartDashboardWidgetEnabled.collectAsState(initial = true)
+    val smartRecurringNotifications by userPrefs.isSmartRecurringNotificationsEnabled.collectAsState(initial = true)
+    val smartAutoPaidNotifications by userPrefs.isSmartAutoPaidNotificationsEnabled.collectAsState(initial = true)
 
     var isBatteryExempt by remember {
         mutableStateOf(NotificationHealthRepository.isIgnoringBatteryOptimizations(context))
@@ -301,7 +303,9 @@ fun SettingsScreen(
                     SmartPaymentSettingRow("Enable Auto Matching", smartAutoMatching) { scope.launch { userPrefs.saveSmartAutoMatching(it) } }
                     SmartPaymentSettingRow("Enable Auto Mark Paid", smartAutoMarkPaid) { scope.launch { userPrefs.saveSmartAutoMarkPaid(it) } }
                     SmartPaymentSettingRow("Enable Suggestions", smartSuggestions) { scope.launch { userPrefs.saveSmartSuggestions(it) } }
-                    SmartPaymentSettingRow("Enable Dashboard Widget", smartDashboardWidget, showDivider = false) { scope.launch { userPrefs.saveSmartDashboardWidget(it) } }
+                    SmartPaymentSettingRow("Enable Dashboard Widget", smartDashboardWidget) { scope.launch { userPrefs.saveSmartDashboardWidget(it) } }
+                    SmartPaymentSettingRow("Notify Recurring Detected", smartRecurringNotifications) { scope.launch { userPrefs.saveSmartRecurringNotifications(it) } }
+                    SmartPaymentSettingRow("Notify Auto Paid", smartAutoPaidNotifications, showDivider = false) { scope.launch { userPrefs.saveSmartAutoPaidNotifications(it) } }
                 }
             }
 

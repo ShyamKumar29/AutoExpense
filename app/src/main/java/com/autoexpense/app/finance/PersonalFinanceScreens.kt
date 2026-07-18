@@ -123,6 +123,7 @@ import com.autoexpense.app.data.RecurringPaymentEntity
 import com.autoexpense.app.data.RecurringPaymentRepository
 import com.autoexpense.app.data.UserPreferencesRepository
 import com.autoexpense.app.notification.RecurringPaymentDetector
+import com.autoexpense.app.notification.SmartPaymentsFeedback
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.map
@@ -446,9 +447,11 @@ fun UpcomingDashboardCard(onViewAll: () -> Unit) {
 @Composable
 fun PaymentsScreen(
     billsViewModel: BillsViewModel = androidx.lifecycle.viewmodel.compose.viewModel(),
-    recurringViewModel: RecurringPaymentsViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
+    recurringViewModel: RecurringPaymentsViewModel = androidx.lifecycle.viewmodel.compose.viewModel(),
+    initialTab: String = "bills",
+    focusSuggestionsOnOpen: Boolean = false
 ) {
-    var selectedTab by remember { mutableStateOf("bills") }
+    var selectedTab by remember(initialTab) { mutableStateOf(if (initialTab == "subscriptions") "subscriptions" else "bills") }
     var editingBill by remember { mutableStateOf<BillEntity?>(null) }
     var editingSubscription by remember { mutableStateOf<RecurringPaymentEntity?>(null) }
     var showBillSheet by remember { mutableStateOf(false) }
@@ -460,6 +463,7 @@ fun PaymentsScreen(
     val userPrefs = remember(context) { UserPreferencesRepository.getInstance(context) }
     val smartDetectionEnabled by userPrefs.isSmartPaymentDetectionEnabled.collectAsState(initial = true)
     val smartSuggestionsEnabled by userPrefs.isSmartSuggestionsEnabled.collectAsState(initial = true)
+    val smartRecurringNotificationsEnabled by userPrefs.isSmartRecurringNotificationsEnabled.collectAsState(initial = true)
     val tabs = listOf("bills" to "Bills", "subscriptions" to "Subscriptions")
     val visibleBills = if (selectedTab == "bills") bills else emptyList()
     val visibleSubscriptions = if (selectedTab == "subscriptions") recurring else emptyList()
@@ -467,12 +471,31 @@ fun PaymentsScreen(
     var ignoredSuggestionIds by remember {
         mutableStateOf(smartPrefs.getStringSet("ignored_suggestions", emptySet()).orEmpty())
     }
+    var notifiedSuggestionIds by remember {
+        mutableStateOf(smartPrefs.getStringSet("notified_suggestions", emptySet()).orEmpty())
+    }
     val suggestions = remember(transactions, bills, recurring, ignoredSuggestionIds, selectedTab, smartDetectionEnabled, smartSuggestionsEnabled) {
         if (!smartDetectionEnabled || !smartSuggestionsEnabled) {
             emptyList()
         } else {
             detectSmartPaymentSuggestions(transactions, bills, recurring, ignoredSuggestionIds)
                 .filter { if (selectedTab == "bills") it.type == "BILL" else it.type == "SUBSCRIPTION" }
+        }
+    }
+    val paymentsScrollState = rememberScrollState()
+
+    LaunchedEffect(suggestions, smartRecurringNotificationsEnabled) {
+        if (!smartRecurringNotificationsEnabled) return@LaunchedEffect
+        val newSuggestion = suggestions.firstOrNull { it.id !in notifiedSuggestionIds } ?: return@LaunchedEffect
+        SmartPaymentsFeedback.publishRecurringDetected(context, newSuggestion.merchant, newSuggestion.frequency)
+        val updated = notifiedSuggestionIds + newSuggestion.id
+        notifiedSuggestionIds = updated
+        smartPrefs.edit().putStringSet("notified_suggestions", updated).apply()
+    }
+
+    LaunchedEffect(focusSuggestionsOnOpen, suggestions.size) {
+        if (focusSuggestionsOnOpen && suggestions.isNotEmpty()) {
+            paymentsScrollState.animateScrollTo(620)
         }
     }
 
@@ -531,7 +554,8 @@ fun PaymentsScreen(
         FinanceListScreenShell(
             title = "Payments",
             subtitle = "Manage bills and subscriptions",
-            modifier = Modifier.padding(innerPadding)
+            modifier = Modifier.padding(innerPadding),
+            scrollState = paymentsScrollState
         ) {
             Row(
                 modifier = Modifier
@@ -1587,13 +1611,14 @@ private fun FinanceListScreenShell(
     title: String,
     subtitle: String,
     modifier: Modifier = Modifier,
+    scrollState: androidx.compose.foundation.ScrollState = rememberScrollState(),
     content: @Composable ColumnScope.() -> Unit
 ) {
     Column(
         modifier = modifier
             .fillMaxSize()
             .background(ColorBg0)
-            .verticalScroll(rememberScrollState())
+            .verticalScroll(scrollState)
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {

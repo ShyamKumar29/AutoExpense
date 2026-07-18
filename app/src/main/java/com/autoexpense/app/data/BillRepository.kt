@@ -40,14 +40,15 @@ object BillRepository {
         merchantOrRecipient: String,
         amount: Double,
         paidAt: Long
-    ) {
+    ): BillEntity? {
         val normalizedMerchant = normalize(merchantOrRecipient)
         val match = dao.getOpenBills().firstOrNull { bill ->
             kotlin.math.abs(bill.amount - amount) < 0.01 &&
                 (normalize(bill.provider).contains(normalizedMerchant) ||
                     normalizedMerchant.contains(normalize(bill.provider)))
-        } ?: return
+        } ?: return null
         dao.markPaid(match.id, transactionId, paidAt)
+        return match
     }
 
     private fun normalize(value: String): String =

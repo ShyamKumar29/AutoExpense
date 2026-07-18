@@ -50,6 +50,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
@@ -115,6 +116,7 @@ import com.autoexpense.app.ui.PaymentDetectionSetupScreen
 import com.autoexpense.app.ui.AppHaptic
 import com.autoexpense.app.ui.components.AeGradientCard
 import com.autoexpense.app.ui.theme.AeGradients
+import com.autoexpense.app.notification.SmartPaymentsFeedback
 
 // ── COLOR PALETTE ──────────────────────────────────────────────────────────
 var ColorBg0 by mutableStateOf(Color(0xFF07111F))
@@ -165,6 +167,7 @@ fun updateAppThemeColors(isDark: Boolean) {
 @Composable
 fun AutoExpenseTheme(content: @Composable () -> Unit) {
     val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
     val userPrefs = remember { com.autoexpense.app.data.UserPreferencesRepository.getInstance(context) }
     val selectedTheme by userPrefs.theme.collectAsState(initial = "system")
     val isSystemDark = isSystemInDarkTheme()
@@ -955,6 +958,7 @@ fun MainAppContainer(
     exportViewModel: com.autoexpense.app.export.ExportViewModel = viewModel()
 ) {
     val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
     val userPrefs = remember { com.autoexpense.app.data.UserPreferencesRepository.getInstance(context) }
     val isOnboardingCompleted by userPrefs.isOnboardingCompleted.collectAsState(initial = false)
     val isHapticEnabled by userPrefs.isHapticFeedbackEnabled.collectAsState(initial = true)
@@ -970,7 +974,16 @@ fun MainAppContainer(
         BudgetRepositorySingleton.currentWarningThreshold = budgetWarningThreshold.toDouble()
     }
 
-    var activeScreen by remember { mutableStateOf("dashboard") }
+    val launchTargetScreen = remember {
+        (context as? android.app.Activity)?.intent?.getStringExtra(SmartPaymentsFeedback.EXTRA_TARGET_SCREEN)
+    }
+    val launchPaymentTab = remember {
+        (context as? android.app.Activity)?.intent?.getStringExtra(SmartPaymentsFeedback.EXTRA_PAYMENT_TAB)
+    }
+    val launchFocusSuggestions = remember {
+        (context as? android.app.Activity)?.intent?.getBooleanExtra(SmartPaymentsFeedback.EXTRA_FOCUS_SUGGESTIONS, false) == true
+    }
+    var activeScreen by remember { mutableStateOf(launchTargetScreen ?: "dashboard") }
     var openPaymentSetupFromDashboard by remember { mutableStateOf(false) }
     var settingsReturnScreen by remember { mutableStateOf("profile") }
     // Session-only: once dismissed the card won't re-appear until next launch.
@@ -979,6 +992,28 @@ fun MainAppContainer(
     val reviewCount by reviewViewModel.pendingReviewCount.collectAsState()
     val notificationEnabled by profileViewModel.notificationAccessEnabled.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
+
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_START -> SmartPaymentsFeedback.setAppVisible(true)
+                Lifecycle.Event.ON_STOP -> SmartPaymentsFeedback.setAppVisible(false)
+                else -> Unit
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        SmartPaymentsFeedback.setAppVisible(true)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+            SmartPaymentsFeedback.setAppVisible(false)
+        }
+    }
+
+    LaunchedEffect(snackbarHostState) {
+        SmartPaymentsFeedback.events.collect { event ->
+            snackbarHostState.showSnackbar(event.message)
+        }
+    }
 
     // Refresh permission status after login and whenever the active screen changes
     // (covers the case where the user returns from Android Settings).
@@ -1059,7 +1094,10 @@ fun MainAppContainer(
                             onBackToDashboard = { activeScreen = "dashboard" }
                         )
                         "budget" -> BudgetScreen(viewModel = budgetViewModel)
-                        "payments" -> com.autoexpense.app.finance.PaymentsScreen()
+                        "payments" -> com.autoexpense.app.finance.PaymentsScreen(
+                            initialTab = launchPaymentTab ?: "bills",
+                            focusSuggestionsOnOpen = launchFocusSuggestions
+                        )
                         "profile" -> ProfileScreen(
                             viewModel = profileViewModel,
                             onNavigateBack = { activeScreen = "dashboard" },
@@ -2645,6 +2683,60 @@ data class CategorySpendingItem(
     val color: Color
 )
 
+data class DailySpendingItem(
+    val label: String,
+    val tooltipDate: String,
+    val amount: Double,
+    val transactionCount: Int
+)
+
+private fun computeDailySpendingItems(
+    transactions: List<Transaction>,
+    periodType: String,
+    nowMs: Long = System.currentTimeMillis()
+): List<DailySpendingItem> {
+    val confirmed = DashboardViewModel.computeConfirmedOutgoing(transactions)
+    val cal = java.util.Calendar.getInstance()
+    val dateFormat = java.text.SimpleDateFormat("EEEE, d MMM", java.util.Locale.US)
+
+    return if (periodType == "weekly") {
+        val start = DashboardViewModel.getMondayOfWeek(nowMs)
+        val labels = listOf("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+        labels.mapIndexed { index, label ->
+            val dayStart = start + index * 86400000L
+            val dayEnd = dayStart + 86400000L - 1L
+            val txns = confirmed.filter { it.timestamp in dayStart..dayEnd }
+            DailySpendingItem(
+                label = label,
+                tooltipDate = dateFormat.format(java.util.Date(dayStart)),
+                amount = txns.sumOf { DashboardViewModel.parseAmount(it.amount) },
+                transactionCount = txns.size
+            )
+        }
+    } else {
+        val (monthStart, _) = DashboardViewModel.getCurrentMonthBounds(nowMs)
+        cal.timeInMillis = monthStart
+        val daysInMonth = cal.getActualMaximum(java.util.Calendar.DAY_OF_MONTH)
+        (1..daysInMonth).map { day ->
+            cal.timeInMillis = monthStart
+            cal.set(java.util.Calendar.DAY_OF_MONTH, day)
+            cal.set(java.util.Calendar.HOUR_OF_DAY, 0)
+            cal.set(java.util.Calendar.MINUTE, 0)
+            cal.set(java.util.Calendar.SECOND, 0)
+            cal.set(java.util.Calendar.MILLISECOND, 0)
+            val dayStart = cal.timeInMillis
+            val dayEnd = dayStart + 86400000L - 1L
+            val txns = confirmed.filter { it.timestamp in dayStart..dayEnd }
+            DailySpendingItem(
+                label = day.toString(),
+                tooltipDate = dateFormat.format(java.util.Date(dayStart)),
+                amount = txns.sumOf { DashboardViewModel.parseAmount(it.amount) },
+                transactionCount = txns.size
+            )
+        }
+    }
+}
+
 @Composable
 private fun CategoryDonutChart(
     items: List<CategorySpendingItem>,
@@ -2751,23 +2843,123 @@ private fun CategoryLegend(
 }
 
 @Composable
+private fun ExpensesBarChart(
+    items: List<DailySpendingItem>,
+    periodType: String,
+    progress: Float,
+    modifier: Modifier = Modifier
+) {
+    var selectedIndex by remember(items) { mutableStateOf<Int?>(null) }
+    val maxAmount = items.maxOfOrNull { it.amount } ?: 0.0
+
+    if (maxAmount <= 0.0) {
+        Box(modifier = modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+            Text("No spending data available yet.", color = ColorText2, fontSize = 13.sp)
+        }
+        return
+    }
+
+    BoxWithConstraints(modifier = modifier.fillMaxWidth()) {
+        val compact = maxWidth < 360.dp
+        val showMonthlyLabel: (Int) -> Boolean = { index ->
+            periodType == "weekly" || index == 0 || (index + 1) % 5 == 0 || index == items.lastIndex
+        }
+
+        Box(modifier = Modifier.fillMaxSize()) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(168.dp)
+                    .align(Alignment.BottomCenter),
+                horizontalArrangement = Arrangement.spacedBy(if (periodType == "weekly") 10.dp else 3.dp),
+                verticalAlignment = Alignment.Bottom
+            ) {
+                items.forEachIndexed { index, item ->
+                    val ratio = (item.amount / maxAmount).toFloat().coerceIn(0f, 1f)
+                    val barHeight = (118.dp * ratio * progress).coerceAtLeast(if (item.amount > 0.0) 6.dp else 2.dp)
+                    val selected = selectedIndex == index
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxHeight(),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Bottom
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth(if (periodType == "weekly") 0.64f else 0.82f)
+                                .height(barHeight)
+                                .clip(RoundedCornerShape(topStart = 8.dp, topEnd = 8.dp, bottomStart = 3.dp, bottomEnd = 3.dp))
+                                .background(if (selected) ColorOrange else ColorOrange.copy(alpha = 0.58f))
+                                .clickable { selectedIndex = index }
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = if (showMonthlyLabel(index)) item.label else "",
+                            color = if (selected) ColorOrange else ColorText3,
+                            fontSize = if (periodType == "weekly") 11.sp else if (compact) 8.sp else 9.sp,
+                            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                            maxLines = 1
+                        )
+                    }
+                }
+            }
+
+            selectedIndex?.let { index ->
+                val item = items[index]
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = ColorBg1),
+                    shape = RoundedCornerShape(14.dp),
+                    border = BorderStroke(1.dp, ColorBg3),
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .padding(top = 2.dp)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text(item.tooltipDate, color = ColorText2, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                        Text(DashboardViewModel.formatIndianCurrencyValue(item.amount), color = ColorText1, fontSize = 16.sp, fontWeight = FontWeight.ExtraBold)
+                        Text(
+                            "${item.transactionCount} ${if (item.transactionCount == 1) "Transaction" else "Transactions"}",
+                            color = ColorText3,
+                            fontSize = 11.sp
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
 fun SpendingByCategoryCard(
     transactions: List<Transaction>,
     periodType: String,
     onPeriodChange: (String) -> Unit
 ) {
+    var analyticsMode by remember { mutableStateOf("expenses") }
     val (items, totalAmount) = remember(transactions, periodType) {
         computeCategorySpendingItems(transactions, periodType)
     }
+    val expenseItems = remember(transactions, periodType) {
+        computeDailySpendingItems(transactions, periodType)
+    }
 
     val animProgress = remember { androidx.compose.animation.core.Animatable(0f) }
-    LaunchedEffect(items) {
+    LaunchedEffect(items, expenseItems, analyticsMode) {
         animProgress.snapTo(0f)
         animProgress.animateTo(
             targetValue = 1f,
             animationSpec = tween(durationMillis = 850, easing = androidx.compose.animation.core.FastOutSlowInEasing)
         )
     }
+    val flipRotation by animateFloatAsState(
+        targetValue = if (analyticsMode == "categories") 180f else 0f,
+        animationSpec = tween(durationMillis = 420, easing = androidx.compose.animation.core.FastOutSlowInEasing),
+        label = "analyticsFlip"
+    )
 
     Card(
         colors = CardDefaults.cardColors(containerColor = ColorBg2),
@@ -2776,14 +2968,13 @@ fun SpendingByCategoryCard(
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(modifier = Modifier.padding(18.dp)) {
-            // Header Row
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    "Spending by Category",
+                    "Spending Analytics",
                     fontSize = 18.sp,
                     color = ColorText1,
                     fontWeight = FontWeight.ExtraBold,
@@ -2792,6 +2983,38 @@ fun SpendingByCategoryCard(
                     modifier = Modifier.weight(1f)
                 )
                 Spacer(modifier = Modifier.width(10.dp))
+                Row(
+                    modifier = Modifier
+                        .background(ColorBg3, RoundedCornerShape(18.dp))
+                        .padding(2.dp)
+                ) {
+                    listOf("expenses" to "Expenses", "categories" to "Categories").forEach { (key, label) ->
+                        val selected = analyticsMode == key
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(16.dp))
+                                .background(if (selected) ColorOrange else Color.Transparent)
+                                .clickable { analyticsMode = key }
+                                .padding(horizontal = 11.dp, vertical = 7.dp)
+                        ) {
+                            Text(
+                                label,
+                                fontSize = 11.sp,
+                                color = if (selected) Color.White else ColorText2,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
                 Row(
                     modifier = Modifier
                         .background(ColorBg3, RoundedCornerShape(18.dp))
@@ -2824,48 +3047,80 @@ fun SpendingByCategoryCard(
 
             Spacer(modifier = Modifier.height(14.dp))
 
-            if (items.isEmpty()) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(160.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text("No confirmed spending in this period", color = ColorText2, fontSize = 13.sp)
-                }
-            } else {
-                BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
-                    val compact = maxWidth < 330.dp
-                    if (compact) {
-                        Column(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalAlignment = Alignment.CenterHorizontally
-                        ) {
-                            CategoryDonutChart(
-                                items = items,
-                                totalAmount = totalAmount,
-                                progress = animProgress.value,
-                                size = 136.dp
-                            )
-                            Spacer(modifier = Modifier.height(12.dp))
-                            CategoryLegend(items = items, compact = true, modifier = Modifier.fillMaxWidth())
-                        }
-                    } else {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .heightIn(min = 138.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(12.dp)
-                        ) {
-                            CategoryDonutChart(
-                                items = items,
-                                totalAmount = totalAmount,
-                                progress = animProgress.value,
-                                modifier = Modifier.weight(0.40f),
-                                size = 128.dp
-                            )
-                            CategoryLegend(items = items, compact = false, modifier = Modifier.weight(0.60f))
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(238.dp)
+                    .graphicsLayer {
+                        rotationY = flipRotation
+                        cameraDistance = 16f * density
+                    }
+            ) {
+                if (flipRotation <= 90f) {
+                    ExpensesBarChart(
+                        items = expenseItems,
+                        periodType = periodType,
+                        progress = animProgress.value,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                } else {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .graphicsLayer { rotationY = 180f }
+                    ) {
+                        if (items.isEmpty()) {
+                            Box(
+                                modifier = Modifier.fillMaxSize(),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text("No categorized expenses available.", color = ColorText2, fontSize = 13.sp)
+                            }
+                        } else {
+                            BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+                                val compact = maxWidth < 330.dp
+                                if (compact) {
+                                    Column(
+                                        modifier = Modifier.fillMaxSize(),
+                                        horizontalAlignment = Alignment.CenterHorizontally
+                                    ) {
+                                        CategoryDonutChart(
+                                            items = items,
+                                            totalAmount = totalAmount,
+                                            progress = animProgress.value,
+                                            size = 124.dp
+                                        )
+                                        Spacer(modifier = Modifier.height(10.dp))
+                                        CategoryLegend(items = items, compact = true, modifier = Modifier.fillMaxWidth())
+                                    }
+                                } else {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                    ) {
+                                        CategoryDonutChart(
+                                            items = items,
+                                            totalAmount = totalAmount,
+                                            progress = animProgress.value,
+                                            modifier = Modifier.weight(0.40f),
+                                            size = 128.dp
+                                        )
+                                        Column(modifier = Modifier.weight(0.60f)) {
+                                            CategoryLegend(items = items, compact = false, modifier = Modifier.fillMaxWidth())
+                                            Spacer(modifier = Modifier.height(8.dp))
+                                            Text(
+                                                "Highest: ${items.first().categoryName}",
+                                                color = ColorText3,
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.SemiBold,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -4062,6 +4317,14 @@ fun NeedsReviewScreen(
     var showSuccessAnimation by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
+    val pendingIgnoredIds = remember { mutableStateListOf<String>() }
+    val visibleReviewTxns = remember(reviewTxns, pendingIgnoredIds.toList()) {
+        reviewTxns.filterNot { it.id in pendingIgnoredIds }
+    }
+
+    LaunchedEffect(reviewTxns) {
+        pendingIgnoredIds.removeAll { hiddenId -> reviewTxns.none { it.id == hiddenId } }
+    }
 
     if (showSuccessAnimation) {
         LaunchedEffect(showSuccessAnimation) {
@@ -4091,7 +4354,7 @@ fun NeedsReviewScreen(
                     )
                 }
 
-                if (reviewTxns.isNotEmpty()) {
+                if (visibleReviewTxns.isNotEmpty()) {
                     Button(
                         onClick = {
                             AppHaptic.trigger(context)
@@ -4114,7 +4377,7 @@ fun NeedsReviewScreen(
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            if (reviewTxns.isEmpty()) {
+            if (visibleReviewTxns.isEmpty()) {
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
@@ -4137,9 +4400,11 @@ fun NeedsReviewScreen(
                 Box(modifier = Modifier.weight(1f)) {
                     Column(
                         verticalArrangement = Arrangement.spacedBy(12.dp),
-                        modifier = Modifier.verticalScroll(rememberScrollState())
+                        modifier = Modifier
+                            .animateContentSize()
+                            .verticalScroll(rememberScrollState())
                     ) {
-                        reviewTxns.forEach { t ->
+                        visibleReviewTxns.forEach { t ->
                             key(t.id) {
                                 ReviewCard(
                                     txn = t,
@@ -4209,9 +4474,21 @@ fun NeedsReviewScreen(
                                         }
                                     },
                                     onIgnore = {
-                                        viewModel.ignoreTransaction(t.id)
-                                        scope.launch {
-                                            snackbarHostState.showSnackbar("Transaction ignored")
+                                        if (t.id !in pendingIgnoredIds) {
+                                            AppHaptic.trigger(context)
+                                            pendingIgnoredIds.add(t.id)
+                                            scope.launch {
+                                                val result = snackbarHostState.showSnackbar(
+                                                    message = "Transaction ignored.",
+                                                    actionLabel = "Undo",
+                                                    duration = SnackbarDuration.Short
+                                                )
+                                                if (result == SnackbarResult.ActionPerformed) {
+                                                    pendingIgnoredIds.remove(t.id)
+                                                } else {
+                                                    viewModel.ignoreTransaction(t.id)
+                                                }
+                                            }
                                         }
                                     }
                                 )

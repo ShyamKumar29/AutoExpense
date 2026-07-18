@@ -24,7 +24,9 @@ data class PreferencesSnapshot(
     val isSmartAutoMatchingEnabled: Boolean = true,
     val isSmartAutoMarkPaidEnabled: Boolean = true,
     val isSmartSuggestionsEnabled: Boolean = true,
-    val isSmartDashboardWidgetEnabled: Boolean = true
+    val isSmartDashboardWidgetEnabled: Boolean = true,
+    val isSmartRecurringNotificationsEnabled: Boolean = true,
+    val isSmartAutoPaidNotificationsEnabled: Boolean = true
 )
 
 val Context.userDataStore: DataStore<Preferences> by preferencesDataStore(name = "user_prefs")
@@ -43,6 +45,8 @@ class UserPreferencesRepository(private val context: Context) {
         private val SMART_AUTO_MARK_PAID_KEY = booleanPreferencesKey("smart_auto_mark_paid")
         private val SMART_SUGGESTIONS_KEY = booleanPreferencesKey("smart_suggestions")
         private val SMART_DASHBOARD_WIDGET_KEY = booleanPreferencesKey("smart_dashboard_widget")
+        private val SMART_RECURRING_NOTIFICATIONS_KEY = booleanPreferencesKey("smart_recurring_notifications")
+        private val SMART_AUTO_PAID_NOTIFICATIONS_KEY = booleanPreferencesKey("smart_auto_paid_notifications")
 
         @Volatile
         private var INSTANCE: UserPreferencesRepository? = null
@@ -104,6 +108,14 @@ class UserPreferencesRepository(private val context: Context) {
         preferences[SMART_DASHBOARD_WIDGET_KEY] ?: true
     }
 
+    val isSmartRecurringNotificationsEnabled: Flow<Boolean> = context.userDataStore.data.map { preferences ->
+        preferences[SMART_RECURRING_NOTIFICATIONS_KEY] ?: true
+    }
+
+    val isSmartAutoPaidNotificationsEnabled: Flow<Boolean> = context.userDataStore.data.map { preferences ->
+        preferences[SMART_AUTO_PAID_NOTIFICATIONS_KEY] ?: true
+    }
+
     suspend fun saveLastBackupTimestamp(timestamp: Long) {
         context.userDataStore.edit { preferences ->
             preferences[LAST_BACKUP_TIMESTAMP_KEY] = timestamp
@@ -123,7 +135,9 @@ class UserPreferencesRepository(private val context: Context) {
             isSmartAutoMatchingEnabled = prefs[SMART_AUTO_MATCHING_KEY] ?: true,
             isSmartAutoMarkPaidEnabled = prefs[SMART_AUTO_MARK_PAID_KEY] ?: true,
             isSmartSuggestionsEnabled = prefs[SMART_SUGGESTIONS_KEY] ?: true,
-            isSmartDashboardWidgetEnabled = prefs[SMART_DASHBOARD_WIDGET_KEY] ?: true
+            isSmartDashboardWidgetEnabled = prefs[SMART_DASHBOARD_WIDGET_KEY] ?: true,
+            isSmartRecurringNotificationsEnabled = prefs[SMART_RECURRING_NOTIFICATIONS_KEY] ?: true,
+            isSmartAutoPaidNotificationsEnabled = prefs[SMART_AUTO_PAID_NOTIFICATIONS_KEY] ?: true
         )
     }
 
@@ -140,6 +154,8 @@ class UserPreferencesRepository(private val context: Context) {
             preferences[SMART_AUTO_MARK_PAID_KEY] = snapshot.isSmartAutoMarkPaidEnabled
             preferences[SMART_SUGGESTIONS_KEY] = snapshot.isSmartSuggestionsEnabled
             preferences[SMART_DASHBOARD_WIDGET_KEY] = snapshot.isSmartDashboardWidgetEnabled
+            preferences[SMART_RECURRING_NOTIFICATIONS_KEY] = snapshot.isSmartRecurringNotificationsEnabled
+            preferences[SMART_AUTO_PAID_NOTIFICATIONS_KEY] = snapshot.isSmartAutoPaidNotificationsEnabled
         }
     }
 
@@ -198,6 +214,14 @@ class UserPreferencesRepository(private val context: Context) {
 
     suspend fun saveSmartDashboardWidget(enabled: Boolean) {
         context.userDataStore.edit { preferences -> preferences[SMART_DASHBOARD_WIDGET_KEY] = enabled }
+    }
+
+    suspend fun saveSmartRecurringNotifications(enabled: Boolean) {
+        context.userDataStore.edit { preferences -> preferences[SMART_RECURRING_NOTIFICATIONS_KEY] = enabled }
+    }
+
+    suspend fun saveSmartAutoPaidNotifications(enabled: Boolean) {
+        context.userDataStore.edit { preferences -> preferences[SMART_AUTO_PAID_NOTIFICATIONS_KEY] = enabled }
     }
 
     suspend fun clearAllPreferences() {

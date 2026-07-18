@@ -45,18 +45,29 @@ object PaymentIngestion {
             val autoMarkPaidEnabled = context?.let {
                 UserPreferencesRepository.getInstance(it).isSmartAutoMarkPaidEnabled.first()
             } ?: true
+            val autoPaidNotificationsEnabled = context?.let {
+                UserPreferencesRepository.getInstance(it).isSmartAutoPaidNotificationsEnabled.first()
+            } ?: true
             if (autoMatchingEnabled && autoMarkPaidEnabled) {
-                BillRepository.markMatchingPaymentPaid(
+                val matchedBill = BillRepository.markMatchingPaymentPaid(
                     transactionId = payment.id,
                     merchantOrRecipient = payment.merchantOrRecipient,
                     amount = payment.amount,
                     paidAt = payment.timestamp
                 )
-                RecurringPaymentRepository.markMatchingPaymentPaid(
+                val matchedSubscription = RecurringPaymentRepository.markMatchingPaymentPaid(
                     merchantOrRecipient = payment.merchantOrRecipient,
                     amount = payment.amount,
                     paidAt = payment.timestamp
                 )
+                if (autoPaidNotificationsEnabled) {
+                    matchedBill?.let {
+                        SmartPaymentsFeedback.publishAutoPaid(context, it.provider, "BILL")
+                    }
+                    matchedSubscription?.let {
+                        SmartPaymentsFeedback.publishAutoPaid(context, it.merchant, "SUBSCRIPTION")
+                    }
+                }
             }
             if (context != null) {
                 NotificationHealthRepository.recordPaymentDetected(context, payment.timestamp)

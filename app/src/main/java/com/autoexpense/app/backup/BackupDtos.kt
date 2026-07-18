@@ -285,7 +285,9 @@ data class PreferencesBackupDto(
     val isSmartAutoMatchingEnabled: Boolean = true,
     val isSmartAutoMarkPaidEnabled: Boolean = true,
     val isSmartSuggestionsEnabled: Boolean = true,
-    val isSmartDashboardWidgetEnabled: Boolean = true
+    val isSmartDashboardWidgetEnabled: Boolean = true,
+    val isSmartRecurringNotificationsEnabled: Boolean = true,
+    val isSmartAutoPaidNotificationsEnabled: Boolean = true
 ) {
     fun toSnapshot(): PreferencesSnapshot = PreferencesSnapshot(
         userName = userName,
@@ -298,7 +300,9 @@ data class PreferencesBackupDto(
         isSmartAutoMatchingEnabled = isSmartAutoMatchingEnabled,
         isSmartAutoMarkPaidEnabled = isSmartAutoMarkPaidEnabled,
         isSmartSuggestionsEnabled = isSmartSuggestionsEnabled,
-        isSmartDashboardWidgetEnabled = isSmartDashboardWidgetEnabled
+        isSmartDashboardWidgetEnabled = isSmartDashboardWidgetEnabled,
+        isSmartRecurringNotificationsEnabled = isSmartRecurringNotificationsEnabled,
+        isSmartAutoPaidNotificationsEnabled = isSmartAutoPaidNotificationsEnabled
     )
 
     companion object {
@@ -313,7 +317,9 @@ data class PreferencesBackupDto(
             isSmartAutoMatchingEnabled = snapshot.isSmartAutoMatchingEnabled,
             isSmartAutoMarkPaidEnabled = snapshot.isSmartAutoMarkPaidEnabled,
             isSmartSuggestionsEnabled = snapshot.isSmartSuggestionsEnabled,
-            isSmartDashboardWidgetEnabled = snapshot.isSmartDashboardWidgetEnabled
+            isSmartDashboardWidgetEnabled = snapshot.isSmartDashboardWidgetEnabled,
+            isSmartRecurringNotificationsEnabled = snapshot.isSmartRecurringNotificationsEnabled,
+            isSmartAutoPaidNotificationsEnabled = snapshot.isSmartAutoPaidNotificationsEnabled
         )
     }
 }

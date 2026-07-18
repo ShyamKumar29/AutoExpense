@@ -573,17 +573,6 @@ private fun BudgetEmptyState(onCreate: () -> Unit) {
                 lineHeight = 23.sp,
                 textAlign = TextAlign.Center
             )
-            Spacer(modifier = Modifier.height(22.dp))
-            Button(
-                onClick = onCreate,
-                colors = ButtonDefaults.buttonColors(containerColor = ColorOrange),
-                shape = RoundedCornerShape(16.dp),
-                contentPadding = PaddingValues(horizontal = 22.dp, vertical = 13.dp)
-            ) {
-                Icon(Icons.Default.Add, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
-                Spacer(modifier = Modifier.width(8.dp))
-                Text("Create Budget", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold)
-            }
         }
     }
 }
@@ -608,9 +597,6 @@ private fun EmptyCategoryBudgetCard(onCreate: () -> Unit) {
                 Text("No category budgets", color = ColorText1, fontSize = 16.sp, fontWeight = FontWeight.Bold)
                 Spacer(modifier = Modifier.height(3.dp))
                 Text("Add limits for food, shopping, travel, bills and more.", color = ColorText2, fontSize = 13.sp)
-            }
-            IconButton(onClick = onCreate) {
-                Icon(Icons.Default.Add, contentDescription = "Create category budget", tint = ColorOrange)
             }
         }
     }
