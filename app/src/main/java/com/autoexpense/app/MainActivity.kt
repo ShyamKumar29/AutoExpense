@@ -1333,7 +1333,7 @@ fun DashboardHeroCard(
             .fillMaxWidth()
             .clip(RoundedCornerShape(22.dp))
     ) {
-        Box(
+        BoxWithConstraints(
             modifier = Modifier
                 .fillMaxWidth()
                 .heightIn(min = 168.dp)
@@ -1347,18 +1347,19 @@ fun DashboardHeroCard(
                 .border(1.dp, ColorOrange.copy(alpha = 0.45f), RoundedCornerShape(22.dp))
                 .padding(horizontal = 22.dp, vertical = 20.dp)
         ) {
-            if (trendPoints.isNotEmpty()) {
+            val showSparkline = trendPoints.isNotEmpty() && maxWidth >= 300.dp
+            if (showSparkline) {
                 HeroTrendLine(
                     points = trendPoints,
                     progress = lineProgress,
                     modifier = Modifier
                         .align(Alignment.CenterEnd)
-                        .fillMaxWidth(0.40f)
+                        .fillMaxWidth(0.38f)
                         .height(82.dp)
                 )
             }
 
-            Column(modifier = Modifier.fillMaxWidth()) {
+            Column(modifier = Modifier.fillMaxWidth(if (showSparkline) 0.62f else 1f)) {
                 Text(
                     "Total Spent",
                     color = Color.White.copy(alpha = 0.78f),
@@ -1393,29 +1394,36 @@ fun DashboardHeroCard(
 }
 
 private fun computeHeroTrendPoints(transactions: List<Transaction>, nowMs: Long = System.currentTimeMillis()): List<Float> {
-    val (monthStart, monthEnd) = DashboardViewModel.getCurrentMonthBounds(nowMs)
-    val monthTxns = transactions
-        .filter { it.timestamp in monthStart..monthEnd }
+    val dayMs = 86400000L
+    val endMs = nowMs
+    val startMs = nowMs - (29L * dayMs)
+    val recentTxns = transactions
+        .filter { it.timestamp in startMs..endMs }
         .sortedBy { it.timestamp }
-    val activeDays = monthTxns.map {
+    val activeDays = recentTxns.map {
         val cal = java.util.Calendar.getInstance().apply { timeInMillis = it.timestamp }
-        cal.get(java.util.Calendar.DAY_OF_MONTH)
+        cal.get(java.util.Calendar.YEAR) to cal.get(java.util.Calendar.DAY_OF_YEAR)
     }.distinct().size
-    if (monthTxns.size < 4 || activeDays < 3) return emptyList()
+    if (recentTxns.size < 5 || activeDays < 3) return emptyList()
 
-    val cal = java.util.Calendar.getInstance().apply { timeInMillis = nowMs }
-    val today = cal.get(java.util.Calendar.DAY_OF_MONTH)
-    val daily = FloatArray(today.coerceAtLeast(1)) { 0f }
-    monthTxns.forEach { transaction ->
-        cal.timeInMillis = transaction.timestamp
-        val dayIndex = (cal.get(java.util.Calendar.DAY_OF_MONTH) - 1).coerceIn(daily.indices)
+    val startOfWindow = java.util.Calendar.getInstance().apply {
+        timeInMillis = startMs
+        set(java.util.Calendar.HOUR_OF_DAY, 0)
+        set(java.util.Calendar.MINUTE, 0)
+        set(java.util.Calendar.SECOND, 0)
+        set(java.util.Calendar.MILLISECOND, 0)
+    }.timeInMillis
+    val daily = FloatArray(30) { 0f }
+    recentTxns.forEach { transaction ->
+        val dayIndex = ((transaction.timestamp - startOfWindow) / dayMs).toInt().coerceIn(daily.indices)
         daily[dayIndex] += DashboardViewModel.parseAmount(transaction.amount).toFloat()
     }
     var running = 0f
-    return daily.map { amount ->
+    val cumulative = daily.map { amount ->
         running += amount
         running
-    }.filter { it >= 0f }
+    }
+    return if (cumulative.distinct().size < 3 || cumulative.lastOrNull() == 0f) emptyList() else cumulative
 }
 
 @Composable

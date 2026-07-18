@@ -1,297 +1,232 @@
 package com.autoexpense.app.budget
 
-import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
-import androidx.compose.material.icons.outlined.AccountBalance
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material.icons.filled.AccountBalanceWallet
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Insights
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.outlined.AccountBalanceWallet
+import androidx.compose.material.icons.outlined.Category
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
-import com.autoexpense.app.*
+import com.autoexpense.app.ColorAmber
+import com.autoexpense.app.ColorBg0
+import com.autoexpense.app.ColorBg2
+import com.autoexpense.app.ColorBg3
+import com.autoexpense.app.ColorOrange
+import com.autoexpense.app.ColorOrangeDim
+import com.autoexpense.app.ColorRed
+import com.autoexpense.app.ColorText1
+import com.autoexpense.app.ColorText2
+import com.autoexpense.app.ColorText3
 import com.autoexpense.app.data.BudgetEntity
+import com.autoexpense.app.data.OVERALL_CATEGORY_KEY
 import com.autoexpense.app.data.PeriodType
 
-@OptIn(ExperimentalLayoutApi::class)
+private data class BudgetSummaryUi(
+    val totalBudget: Double,
+    val spent: Double,
+    val sourceLabel: String
+) {
+    val remaining: Double = totalBudget - spent
+    val percentage: Float = if (totalBudget > 0) (spent / totalBudget).toFloat() else 0f
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun BudgetScreen(viewModel: BudgetViewModel) {
     val budgetsWithSpending by viewModel.budgetsWithSpending.collectAsState()
 
-    var overallDialogPeriod by remember { mutableStateOf<String?>(null) }
-    var editOverallTarget by remember { mutableStateOf<BudgetEntity?>(null) }
-
-    var showCategoryDialog by remember { mutableStateOf(false) }
-    var editCategoryTarget by remember { mutableStateOf<BudgetEntity?>(null) }
-
+    var selectedPeriod by remember { mutableStateOf(PeriodType.WEEKLY) }
+    var editingBudget by remember { mutableStateOf<BudgetEntity?>(null) }
+    var showBudgetSheet by remember { mutableStateOf(false) }
+    var deleteTarget by remember { mutableStateOf<BudgetEntity?>(null) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
 
-    val weeklyOverall = budgetsWithSpending.find { it.budget.category == null && it.budget.periodType == PeriodType.WEEKLY }
-    val monthlyOverall = budgetsWithSpending.find { it.budget.category == null && it.budget.periodType == PeriodType.MONTHLY }
-    val categoryBudgets = budgetsWithSpending.filter { it.budget.category != null }
+    val periodBudgets = remember(budgetsWithSpending, selectedPeriod) {
+        budgetsWithSpending
+            .filter { it.budget.periodType == selectedPeriod }
+            .sortedWith(compareBy<BudgetWithSpending> { it.budget.category != null }.thenBy { it.budget.category ?: "" })
+    }
+    val overallBudget = periodBudgets.find { it.budget.category == null }
+    val categoryBudgets = periodBudgets.filter { it.budget.category != null }
+    val summary = remember(periodBudgets, overallBudget, categoryBudgets) {
+        if (overallBudget != null) {
+            BudgetSummaryUi(
+                totalBudget = overallBudget.budget.limitAmount,
+                spent = overallBudget.spent,
+                sourceLabel = "Overall ${periodLabel(selectedPeriod).lowercase()} budget"
+            )
+        } else {
+            BudgetSummaryUi(
+                totalBudget = categoryBudgets.sumOf { it.budget.limitAmount },
+                spent = categoryBudgets.sumOf { it.spent },
+                sourceLabel = "Category budgets"
+            )
+        }
+    }
 
-    if (budgetsWithSpending.isEmpty()) {
+    Scaffold(
+        containerColor = ColorBg0,
+        floatingActionButton = {
+            FloatingActionButton(
+                onClick = {
+                    editingBudget = null
+                    errorMessage = null
+                    showBudgetSheet = true
+                },
+                containerColor = ColorOrange,
+                contentColor = Color.White,
+                shape = CircleShape
+            ) {
+                Icon(Icons.Default.Add, contentDescription = "Create Budget")
+            }
+        }
+    ) { innerPadding ->
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .background(ColorBg0)
-                .padding(16.dp)
+                .padding(innerPadding)
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp, vertical = 20.dp)
         ) {
-            Text(
-                "Budget",
-                fontWeight = FontWeight.Bold,
-                color = ColorText1,
-                fontSize = 30.sp
-            )
+            Text("Budget", color = ColorText1, fontSize = 30.sp, fontWeight = FontWeight.ExtraBold)
             Spacer(modifier = Modifier.height(6.dp))
-            Text(
-                "Track your spending limits",
-                fontSize = 16.sp,
-                color = ColorText2
-            )
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .weight(1f),
-                contentAlignment = Alignment.Center
-            ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(horizontal = 24.dp)) {
-                    Text(
-                        "No Budgets Yet",
-                        color = ColorText1,
-                        fontSize = 24.sp,
-                        fontWeight = FontWeight.Bold,
-                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                    )
-                    Spacer(modifier = Modifier.height(14.dp))
-                    Text(
-                        "Set budgets for different categories to track\nyour spending and stay on target.",
-                        color = ColorText2,
-                        fontSize = 18.sp,
-                        lineHeight = 26.sp,
-                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                    )
-                }
-            }
-        }
-        return
-    }
+            Text("Track your spending limits", color = ColorText2, fontSize = 16.sp)
+            Spacer(modifier = Modifier.height(18.dp))
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(ColorBg0)
-            .verticalScroll(rememberScrollState())
-    ) {
-        // Top Bar
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(ColorBg1)
-                .padding(horizontal = 16.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                "Budget",
-                fontWeight = FontWeight.Bold,
-                color = ColorText1,
-                fontSize = 30.sp
-            )
-        }
-
-        Column(modifier = Modifier.padding(16.dp)) {
-            Text(
-                "Track your spending limits",
-                fontSize = 16.sp,
-                color = ColorText2,
-                modifier = Modifier.padding(bottom = 20.dp)
+            BudgetPeriodTabs(
+                selectedPeriod = selectedPeriod,
+                onPeriodChange = { selectedPeriod = it }
             )
 
-            Text(
-                "BUDGET OVERVIEW",
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Bold,
-                color = ColorText3,
-                modifier = Modifier.padding(bottom = 8.dp)
-            )
+            Spacer(modifier = Modifier.height(16.dp))
 
-            // Weekly Overall Card
-            if (weeklyOverall != null) {
-                OverallBudgetCard(
-                    title = "Weekly Budget",
-                    item = weeklyOverall,
-                    onEdit = {
-                        overallDialogPeriod = PeriodType.WEEKLY
-                        editOverallTarget = weeklyOverall.budget
-                    },
-                    onDelete = { viewModel.deleteBudget(weeklyOverall.budget.id) }
-                )
-            } else {
-                EmptyOverallCard(
-                    title = "Weekly Budget",
-                    subtitle = "No overall weekly limit set.",
-                    buttonText = "+ Set weekly budget",
-                    onClick = {
-                        overallDialogPeriod = PeriodType.WEEKLY
-                        editOverallTarget = null
-                    }
-                )
-            }
+            AnimatedContent(targetState = selectedPeriod, label = "budgetPeriod") {
+                Column {
+                    BudgetOverviewCard(summary = summary)
 
-            Spacer(modifier = Modifier.height(12.dp))
+                    Spacer(modifier = Modifier.height(18.dp))
 
-            // Monthly Overall Card
-            if (monthlyOverall != null) {
-                OverallBudgetCard(
-                    title = "Monthly Budget",
-                    item = monthlyOverall,
-                    onEdit = {
-                        overallDialogPeriod = PeriodType.MONTHLY
-                        editOverallTarget = monthlyOverall.budget
-                    },
-                    onDelete = { viewModel.deleteBudget(monthlyOverall.budget.id) }
-                )
-            } else {
-                EmptyOverallCard(
-                    title = "Monthly Budget",
-                    subtitle = "No overall monthly limit set.",
-                    buttonText = "+ Set monthly budget",
-                    onClick = {
-                        overallDialogPeriod = PeriodType.MONTHLY
-                        editOverallTarget = null
-                    }
-                )
-            }
-
-            Spacer(modifier = Modifier.height(24.dp))
-
-            // Category Budgets Header
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    "CATEGORY BUDGETS",
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = ColorText3
-                )
-                Button(
-                    onClick = {
-                        editCategoryTarget = null
-                        showCategoryDialog = true
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = ColorOrangeDim),
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-                    shape = RoundedCornerShape(6.dp),
-                    modifier = Modifier.heightIn(min = 32.dp)
-                ) {
-                    Text("+ Add Category Budget", fontSize = 11.sp, color = ColorOrange, fontWeight = FontWeight.Bold)
-                }
-            }
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            if (categoryBudgets.isEmpty()) {
-                Card(
-                    colors = CardDefaults.cardColors(containerColor = ColorBg2),
-                    shape = RoundedCornerShape(12.dp),
-                    border = BorderStroke(1.dp, ColorBg3),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(24.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        Text(
-                            "No category budgets set.",
-                            color = ColorText1,
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.Bold
+                    if (periodBudgets.isEmpty()) {
+                        BudgetEmptyState(
+                            onCreate = {
+                                editingBudget = null
+                                errorMessage = null
+                                showBudgetSheet = true
+                            }
                         )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            "Create weekly or monthly limits for Food & Dining, Transport, Shopping, etc.",
-                            color = ColorText2,
-                            fontSize = 12.sp,
-                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                        )
-                    }
-                }
-            } else {
-                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    categoryBudgets.forEach { item ->
-                        CategoryBudgetCard(
-                            item = item,
-                            onEdit = {
-                                editCategoryTarget = item.budget
-                                showCategoryDialog = true
-                            },
-                            onDelete = { viewModel.deleteBudget(item.budget.id) }
-                        )
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.height(32.dp))
-        }
-    }
-
-    // Set/Edit Overall Budget Dialog
-    if (overallDialogPeriod != null) {
-        val period = overallDialogPeriod!!
-        SetOverallBudgetDialog(
-            periodType = period,
-            existingBudget = editOverallTarget,
-            onDismiss = {
-                overallDialogPeriod = null
-                editOverallTarget = null
-            },
-            onSave = { amount ->
-                viewModel.saveBudget(
-                    category = null,
-                    periodType = period,
-                    limitAmount = amount,
-                    existingId = editOverallTarget?.id
-                ) { result ->
-                    if (result.isFailure) {
-                        errorMessage = result.exceptionOrNull()?.message ?: "Error saving budget"
                     } else {
-                        overallDialogPeriod = null
-                        editOverallTarget = null
+                        BudgetSectionHeader("Category Budgets")
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        if (categoryBudgets.isEmpty()) {
+                            EmptyCategoryBudgetCard(
+                                onCreate = {
+                                    editingBudget = null
+                                    errorMessage = null
+                                    showBudgetSheet = true
+                                }
+                            )
+                        } else {
+                            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                                categoryBudgets.forEach { item ->
+                                    BudgetCategoryCard(
+                                        item = item,
+                                        onEdit = {
+                                            editingBudget = item.budget
+                                            errorMessage = null
+                                            showBudgetSheet = true
+                                        },
+                                        onDelete = { deleteTarget = item.budget }
+                                    )
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(18.dp))
+                        BudgetInsightsCard(items = categoryBudgets)
                     }
+
+                    Spacer(modifier = Modifier.height(84.dp))
                 }
             }
-        )
+        }
     }
 
-    // Add/Edit Category Budget Dialog
-    if (showCategoryDialog) {
-        CategoryBudgetDialog(
-            existingBudget = editCategoryTarget,
+    if (showBudgetSheet) {
+        BudgetEditorSheet(
+            existingBudget = editingBudget,
             allBudgets = budgetsWithSpending.map { it.budget },
+            defaultPeriod = selectedPeriod,
+            externalError = errorMessage,
             onDismiss = {
-                showCategoryDialog = false
-                editCategoryTarget = null
+                showBudgetSheet = false
+                editingBudget = null
                 errorMessage = null
             },
             onSave = { category, periodType, amount ->
@@ -299,32 +234,98 @@ fun BudgetScreen(viewModel: BudgetViewModel) {
                     category = category,
                     periodType = periodType,
                     limitAmount = amount,
-                    existingId = editCategoryTarget?.id
+                    existingId = editingBudget?.id
                 ) { result ->
-                    if (result.isFailure) {
-                        errorMessage = result.exceptionOrNull()?.message ?: "Error saving budget"
-                    } else {
-                        showCategoryDialog = false
-                        editCategoryTarget = null
+                    if (result.isSuccess) {
+                        showBudgetSheet = false
+                        editingBudget = null
                         errorMessage = null
+                    } else {
+                        errorMessage = result.exceptionOrNull()?.message ?: "Error saving budget"
                     }
                 }
+            }
+        )
+    }
+
+    deleteTarget?.let { target ->
+        AlertDialog(
+            onDismissRequest = { deleteTarget = null },
+            containerColor = ColorBg2,
+            titleContentColor = ColorText1,
+            textContentColor = ColorText2,
+            title = { Text("Delete Budget?", fontWeight = FontWeight.Bold) },
+            text = { Text("This budget limit will be removed. Your transactions and spending history will remain unchanged.") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        viewModel.deleteBudget(target.id)
+                        deleteTarget = null
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = ColorRed),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text("Delete", color = Color.White)
+                }
             },
-            externalError = errorMessage
+            dismissButton = {
+                TextButton(onClick = { deleteTarget = null }) {
+                    Text("Cancel", color = ColorText2)
+                }
+            }
         )
     }
 }
 
 @Composable
-fun OverallBudgetCard(
-    title: String,
-    item: BudgetWithSpending,
-    onEdit: () -> Unit,
-    onDelete: () -> Unit
+private fun BudgetPeriodTabs(
+    selectedPeriod: String,
+    onPeriodChange: (String) -> Unit
 ) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(18.dp))
+            .background(ColorBg2)
+            .border(1.dp, ColorBg3, RoundedCornerShape(18.dp))
+            .padding(4.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        listOf(PeriodType.WEEKLY to "Weekly", PeriodType.MONTHLY to "Monthly").forEach { (period, label) ->
+            val selected = selectedPeriod == period
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(if (selected) ColorOrange else Color.Transparent)
+                    .clickable { onPeriodChange(period) }
+                    .padding(vertical = 12.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    label,
+                    color = if (selected) Color.White else ColorText2,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun BudgetOverviewCard(summary: BudgetSummaryUi) {
+    val progress by animateFloatAsState(
+        targetValue = summary.percentage.coerceIn(0f, 1f),
+        animationSpec = tween(durationMillis = 750),
+        label = "budgetOverviewProgress"
+    )
+    val progressColor = budgetProgressColor(summary.percentage)
+
     Card(
         colors = CardDefaults.cardColors(containerColor = ColorBg2),
-        shape = RoundedCornerShape(22.dp),
+        shape = RoundedCornerShape(24.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = 5.dp),
         border = BorderStroke(1.dp, ColorBg3),
         modifier = Modifier.fillMaxWidth()
     ) {
@@ -334,523 +335,527 @@ fun OverallBudgetCard(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(title, fontSize = 16.sp, fontWeight = FontWeight.Bold, color = ColorText1)
-                StatusChip(level = item.level, pct = (item.percentage * 100).toInt())
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Budget Overview", color = ColorText1, fontSize = 20.sp, fontWeight = FontWeight.ExtraBold)
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(summary.sourceLabel, color = ColorText3, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+                BudgetStatusChip(percentage = summary.percentage)
             }
 
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(20.dp))
 
-            val spentStr = formatRupee(item.spent)
-            val limitStr = formatRupee(item.budget.limitAmount)
-            Text(
-                text = "$spentStr spent of $limitStr",
-                fontSize = 18.sp,
-                fontWeight = FontWeight.Bold,
-                color = ColorText1
-            )
+            Text("Total Budget", color = ColorText2, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(formatRupee(summary.totalBudget), color = ColorText1, fontSize = 34.sp, fontWeight = FontWeight.ExtraBold)
 
-            val remaining = item.budget.limitAmount - item.spent
-            val subtext = if (remaining >= 0) {
-                "${formatRupee(remaining)} remaining"
-            } else {
-                "${formatRupee(-remaining)} over limit"
+            Spacer(modifier = Modifier.height(18.dp))
+
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
+                BudgetOverviewMetric("Spent", formatRupee(summary.spent), Modifier.weight(1f))
+                BudgetOverviewMetric(
+                    if (summary.remaining >= 0) "Remaining" else "Over Limit",
+                    formatRupee(kotlin.math.abs(summary.remaining)),
+                    Modifier.weight(1f),
+                    valueColor = if (summary.remaining >= 0) ColorText1 else ColorRed
+                )
             }
-            Text(
-                text = subtext,
-                fontSize = 12.sp,
-                color = if (remaining >= 0) ColorText2 else ColorRed,
-                modifier = Modifier.padding(top = 2.dp)
-            )
 
-            Spacer(modifier = Modifier.height(12.dp))
-
-            val barColor = when (item.level) {
-                BudgetLevel.EXCEEDED -> ColorRed
-                BudgetLevel.LIMIT_REACHED -> ColorOrange
-                BudgetLevel.HIGH_WARNING -> ColorOrange
-                BudgetLevel.NORMAL -> ColorGreen
-                BudgetLevel.WARNING -> ColorAmber
-            }
+            Spacer(modifier = Modifier.height(18.dp))
 
             LinearProgressIndicator(
-                progress = { item.percentage.coerceIn(0f, 1f) },
+                progress = { progress },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(8.dp)
-                    .clip(RoundedCornerShape(4.dp)),
-                color = barColor,
+                    .height(12.dp)
+                    .clip(RoundedCornerShape(10.dp)),
+                color = progressColor,
                 trackColor = ColorBg3
             )
 
-            Spacer(modifier = Modifier.height(14.dp))
+            Spacer(modifier = Modifier.height(10.dp))
+            Text(
+                "${(summary.percentage * 100).toInt().coerceAtLeast(0)}% Used",
+                color = progressColor,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Bold
+            )
+        }
+    }
+}
 
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(
-                    onClick = onEdit,
-                    border = BorderStroke(1.dp, ColorBg3),
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = ColorText2),
-                    shape = RoundedCornerShape(10.dp),
-                    modifier = Modifier.height(36.dp)
-                ) {
-                    Text("Edit", fontSize = 12.sp)
+@Composable
+private fun BudgetOverviewMetric(
+    label: String,
+    value: String,
+    modifier: Modifier = Modifier,
+    valueColor: Color = ColorText1
+) {
+    Column(
+        modifier = modifier
+            .clip(RoundedCornerShape(16.dp))
+            .background(ColorBg3.copy(alpha = 0.45f))
+            .padding(14.dp)
+    ) {
+        Text(label, color = ColorText2, fontSize = 12.sp)
+        Spacer(modifier = Modifier.height(4.dp))
+        Text(value, color = valueColor, fontSize = 18.sp, fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false)
+    }
+}
+
+@Composable
+private fun BudgetSectionHeader(title: String) {
+    Text(title, color = ColorText1, fontSize = 20.sp, fontWeight = FontWeight.ExtraBold)
+}
+
+@Composable
+private fun BudgetCategoryCard(
+    item: BudgetWithSpending,
+    onEdit: () -> Unit,
+    onDelete: () -> Unit
+) {
+    var menuExpanded by remember { mutableStateOf(false) }
+    val remaining = item.budget.limitAmount - item.spent
+    val progress by animateFloatAsState(
+        targetValue = item.percentage.coerceIn(0f, 1f),
+        animationSpec = tween(durationMillis = 700),
+        label = "budgetCategoryProgress"
+    )
+    val color = budgetProgressColor(item.percentage)
+    val category = com.autoexpense.app.ui.cleanCategoryName(item.budget.category ?: "Overall")
+
+    Card(
+        colors = CardDefaults.cardColors(containerColor = ColorBg2),
+        shape = RoundedCornerShape(22.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
+        border = BorderStroke(1.dp, ColorBg3),
+        modifier = Modifier
+            .fillMaxWidth()
+            .animateContentSize()
+    ) {
+        Column(modifier = Modifier.padding(18.dp)) {
+            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                BudgetIconBubble(
+                    icon = com.autoexpense.app.ui.getCategoryIcon(category),
+                    tint = ColorOrange
+                )
+                Spacer(modifier = Modifier.width(12.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(category, color = ColorText1, fontSize = 17.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Spacer(modifier = Modifier.height(3.dp))
+                    Text(periodLabel(item.budget.periodType), color = ColorText3, fontSize = 12.sp, fontWeight = FontWeight.Medium)
                 }
-                TextButton(onClick = onDelete, modifier = Modifier.height(36.dp)) {
-                    Text("Remove", fontSize = 12.sp, color = ColorRed)
+                Box {
+                    IconButton(onClick = { menuExpanded = true }) {
+                        Icon(Icons.Default.MoreVert, contentDescription = "Budget options", tint = ColorText2)
+                    }
+                    DropdownMenu(
+                        expanded = menuExpanded,
+                        onDismissRequest = { menuExpanded = false },
+                        containerColor = ColorBg2
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("Edit", color = ColorText1) },
+                            leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null, tint = ColorOrange) },
+                            onClick = {
+                                menuExpanded = false
+                                onEdit()
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Delete", color = ColorRed) },
+                            leadingIcon = { Icon(Icons.Default.Delete, contentDescription = null, tint = ColorRed) },
+                            onClick = {
+                                menuExpanded = false
+                                onDelete()
+                            }
+                        )
+                    }
                 }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Bottom) {
+                Text(
+                    "${formatRupee(item.spent)} / ${formatRupee(item.budget.limitAmount)}",
+                    color = ColorText1,
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    maxLines = 1,
+                    softWrap = false
+                )
+                Text("${(item.percentage * 100).toInt().coerceAtLeast(0)}%", color = color, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            LinearProgressIndicator(
+                progress = { progress },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(8.dp)
+                    .clip(RoundedCornerShape(6.dp)),
+                color = color,
+                trackColor = ColorBg3
+            )
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    if (remaining >= 0) "Remaining ${formatRupee(remaining)}" else "Budget Exceeded by ${formatRupee(-remaining)}",
+                    color = if (remaining >= 0) ColorText2 else ColorRed,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Medium
+                )
+                BudgetStatusChip(percentage = item.percentage)
             }
         }
     }
 }
 
 @Composable
-fun EmptyOverallCard(
-    title: String,
-    subtitle: String,
-    buttonText: String,
-    onClick: () -> Unit
-) {
+private fun BudgetIconBubble(icon: ImageVector, tint: Color) {
+    Box(
+        modifier = Modifier
+            .size(48.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .background(tint.copy(alpha = 0.14f)),
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(25.dp))
+    }
+}
+
+@Composable
+private fun BudgetStatusChip(percentage: Float) {
+    val color = budgetProgressColor(percentage)
+    val text = when {
+        percentage > 1f -> "Budget Exceeded"
+        percentage >= 0.9f -> "Near Limit"
+        percentage >= 0.7f -> "Warning"
+        else -> "On Track"
+    }
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(999.dp))
+            .background(color.copy(alpha = 0.14f))
+            .padding(horizontal = 10.dp, vertical = 6.dp)
+    ) {
+        Text(text, color = color, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+    }
+}
+
+@Composable
+private fun BudgetEmptyState(onCreate: () -> Unit) {
     Card(
         colors = CardDefaults.cardColors(containerColor = ColorBg2),
-        shape = RoundedCornerShape(22.dp),
+        shape = RoundedCornerShape(24.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = 5.dp),
         border = BorderStroke(1.dp, ColorBg3),
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(20.dp)
+                .padding(horizontal = 24.dp, vertical = 34.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Text(title, fontSize = 16.sp, fontWeight = FontWeight.Bold, color = ColorText1)
-            Spacer(modifier = Modifier.height(4.dp))
-            Text(subtitle, fontSize = 12.sp, color = ColorText2)
-            Spacer(modifier = Modifier.height(14.dp))
+            BudgetIconBubble(icon = Icons.Outlined.AccountBalanceWallet, tint = ColorOrange)
+            Spacer(modifier = Modifier.height(18.dp))
+            Text("No Budgets Yet", color = ColorText1, fontSize = 24.sp, fontWeight = FontWeight.ExtraBold, textAlign = TextAlign.Center)
+            Spacer(modifier = Modifier.height(10.dp))
+            Text(
+                "Create your first weekly or monthly budget to start tracking your spending.",
+                color = ColorText2,
+                fontSize = 16.sp,
+                lineHeight = 23.sp,
+                textAlign = TextAlign.Center
+            )
+            Spacer(modifier = Modifier.height(22.dp))
             Button(
-                onClick = onClick,
+                onClick = onCreate,
                 colors = ButtonDefaults.buttonColors(containerColor = ColorOrange),
-                shape = RoundedCornerShape(10.dp),
-                modifier = Modifier.height(38.dp)
+                shape = RoundedCornerShape(16.dp),
+                contentPadding = PaddingValues(horizontal = 22.dp, vertical = 13.dp)
             ) {
-                Text(buttonText, fontSize = 12.sp, color = Color.White)
+                Icon(Icons.Default.Add, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("Create Budget", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold)
             }
         }
     }
 }
 
 @Composable
-fun CategoryBudgetCard(
-    item: BudgetWithSpending,
-    onEdit: () -> Unit,
-    onDelete: () -> Unit
-) {
+private fun EmptyCategoryBudgetCard(onCreate: () -> Unit) {
     Card(
         colors = CardDefaults.cardColors(containerColor = ColorBg2),
         shape = RoundedCornerShape(22.dp),
         border = BorderStroke(1.dp, ColorBg3),
         modifier = Modifier.fillMaxWidth()
     ) {
-        Column(modifier = Modifier.padding(18.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        imageVector = com.autoexpense.app.ui.getCategoryIcon(item.budget.category ?: "Unknown"),
-                        contentDescription = null,
-                        tint = ColorOrange,
-                        modifier = Modifier.size(18.dp)
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(
-                        com.autoexpense.app.ui.cleanCategoryName(item.budget.category ?: "Unknown"),
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = ColorText1
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(6.dp))
-                            .background(ColorBg3)
-                            .padding(horizontal = 6.dp, vertical = 2.dp)
-                    ) {
-                        Text(
-                            if (item.budget.periodType == PeriodType.WEEKLY) "Weekly" else "Monthly",
-                            fontSize = 10.sp,
-                            color = ColorText2,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-                }
-                StatusChip(level = item.level, pct = (item.percentage * 100).toInt())
-            }
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            val spentStr = formatRupee(item.spent)
-            val limitStr = formatRupee(item.budget.limitAmount)
-            Text(
-                text = "$spentStr spent of $limitStr",
-                fontSize = 16.sp,
-                fontWeight = FontWeight.Bold,
-                color = ColorText1
-            )
-
-            val remaining = item.budget.limitAmount - item.spent
-            val subtext = if (remaining >= 0) {
-                "${formatRupee(remaining)} remaining"
-            } else {
-                "${formatRupee(-remaining)} over limit"
-            }
-            Text(
-                text = subtext,
-                fontSize = 11.sp,
-                color = if (remaining >= 0) ColorText2 else ColorRed,
-                modifier = Modifier.padding(top = 2.dp)
-            )
-
-            Spacer(modifier = Modifier.height(10.dp))
-
-            val barColor = when (item.level) {
-                BudgetLevel.EXCEEDED -> ColorRed
-                BudgetLevel.LIMIT_REACHED -> ColorOrange
-                BudgetLevel.HIGH_WARNING -> ColorOrange
-                BudgetLevel.NORMAL -> ColorGreen
-                BudgetLevel.WARNING -> ColorAmber
-            }
-
-            LinearProgressIndicator(
-                progress = { item.percentage.coerceIn(0f, 1f) },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(6.dp)
-                    .clip(RoundedCornerShape(3.dp)),
-                color = barColor,
-                trackColor = ColorBg3
-            )
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(
-                    onClick = onEdit,
-                    border = BorderStroke(1.dp, ColorBg3),
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = ColorText2),
-                    shape = RoundedCornerShape(10.dp),
-                    modifier = Modifier.height(34.dp)
-                ) {
-                    Text("Edit", fontSize = 11.sp)
-                }
-                TextButton(onClick = onDelete, modifier = Modifier.height(34.dp)) {
-                    Text("Remove", fontSize = 11.sp, color = ColorRed)
-                }
-            }
-        }
-    }
-}
-
-@Composable
-fun StatusChip(level: BudgetLevel, pct: Int) {
-    val (bg, fg, text) = when (level) {
-        BudgetLevel.EXCEEDED -> Triple(ColorRed.copy(alpha = 0.15f), ColorRed, "$pct% · Exceeded")
-        BudgetLevel.LIMIT_REACHED -> Triple(ColorOrange.copy(alpha = 0.15f), ColorOrange, "$pct% · Limit Reached")
-        BudgetLevel.HIGH_WARNING -> Triple(ColorOrange.copy(alpha = 0.15f), ColorOrange, "$pct% · High")
-        BudgetLevel.NORMAL -> Triple(ColorGreen.copy(alpha = 0.15f), ColorGreen, "$pct% · On Track")
-        BudgetLevel.WARNING -> Triple(ColorAmber.copy(alpha = 0.15f), ColorAmber, "$pct% · Warning")
-    }
-    Box(
-        modifier = Modifier
-            .clip(RoundedCornerShape(6.dp))
-            .background(bg)
-            .padding(horizontal = 8.dp, vertical = 4.dp)
-    ) {
-        Text(text, fontSize = 10.sp, color = fg, fontWeight = FontWeight.Bold)
-    }
-}
-
-@Composable
-fun SetOverallBudgetDialog(
-    periodType: String,
-    existingBudget: BudgetEntity?,
-    onDismiss: () -> Unit,
-    onSave: (Double) -> Unit
-) {
-    var amountText by remember {
-        mutableStateOf(if (existingBudget != null) existingBudget.limitAmount.toLong().toString() else "")
-    }
-    var localError by remember { mutableStateOf<String?>(null) }
-
-    val periodLabel = if (periodType == PeriodType.WEEKLY) "Weekly" else "Monthly"
-    val titleText = if (existingBudget != null) "Edit $periodLabel Budget" else "Set $periodLabel Budget"
-
-    Dialog(onDismissRequest = onDismiss) {
-        Card(
-            colors = CardDefaults.cardColors(containerColor = ColorBg2),
-            shape = RoundedCornerShape(22.dp),
-            border = BorderStroke(1.dp, ColorBg3),
-            modifier = Modifier.fillMaxWidth()
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(18.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Column(modifier = Modifier.padding(20.dp)) {
-                Text(titleText, fontSize = 18.sp, fontWeight = FontWeight.Bold, color = ColorText1)
-                Spacer(modifier = Modifier.height(16.dp))
-
-                OutlinedTextField(
-                    value = amountText,
-                    onValueChange = {
-                        amountText = it
-                        localError = null
-                    },
-                    label = { Text("Limit Amount (₹)") },
-                    placeholder = { Text("e.g. 2000") },
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    singleLine = true,
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = ColorOrange,
-                        unfocusedBorderColor = ColorBg3,
-                        focusedLabelColor = ColorOrange,
-                        unfocusedLabelColor = ColorText2,
-                        focusedTextColor = ColorText1,
-                        unfocusedTextColor = ColorText1
-                    ),
-                    modifier = Modifier.fillMaxWidth()
-                )
-
-                if (localError != null) {
-                    Text(
-                        text = localError!!,
-                        color = ColorRed,
-                        fontSize = 12.sp,
-                        modifier = Modifier.padding(top = 4.dp)
-                    )
-                }
-
-                Spacer(modifier = Modifier.height(20.dp))
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End
-                ) {
-                    TextButton(onClick = onDismiss) {
-                        Text("Cancel", color = ColorText3)
-                    }
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Button(
-                        onClick = {
-                            val valAmt = amountText.toDoubleOrNull()
-                            if (valAmt == null || valAmt <= 0) {
-                                localError = "Amount must be greater than zero."
-                            } else {
-                                onSave(valAmt)
-                            }
-                        },
-                        colors = ButtonDefaults.buttonColors(containerColor = ColorOrange),
-                        shape = RoundedCornerShape(6.dp)
-                    ) {
-                        Text("Save", color = Color.White)
-                    }
-                }
+            BudgetIconBubble(icon = Icons.Outlined.Category, tint = ColorOrange)
+            Spacer(modifier = Modifier.width(14.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text("No category budgets", color = ColorText1, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                Spacer(modifier = Modifier.height(3.dp))
+                Text("Add limits for food, shopping, travel, bills and more.", color = ColorText2, fontSize = 13.sp)
+            }
+            IconButton(onClick = onCreate) {
+                Icon(Icons.Default.Add, contentDescription = "Create category budget", tint = ColorOrange)
             }
         }
     }
 }
 
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun CategoryBudgetDialog(
+private fun BudgetInsightsCard(items: List<BudgetWithSpending>) {
+    if (items.isEmpty()) return
+
+    val bestManaged = items.minByOrNull { it.percentage }
+    val highestSpending = items.maxByOrNull { it.spent }
+    val closestToLimit = items.maxByOrNull { it.percentage }
+
+    Card(
+        colors = CardDefaults.cardColors(containerColor = ColorBg2),
+        shape = RoundedCornerShape(22.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
+        border = BorderStroke(1.dp, ColorBg3),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(modifier = Modifier.padding(18.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.Insights, contentDescription = null, tint = ColorOrange, modifier = Modifier.size(22.dp))
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("Insights", color = ColorText1, fontSize = 18.sp, fontWeight = FontWeight.ExtraBold)
+            }
+            Spacer(modifier = Modifier.height(14.dp))
+            InsightRow("Best Managed Budget", bestManaged)
+            InsightRow("Highest Spending", highestSpending)
+            InsightRow("Closest To Limit", closestToLimit)
+        }
+    }
+}
+
+@Composable
+private fun InsightRow(label: String, item: BudgetWithSpending?) {
+    if (item == null) return
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            imageVector = com.autoexpense.app.ui.getCategoryIcon(item.budget.category ?: "Budget"),
+            contentDescription = null,
+            tint = ColorOrange,
+            modifier = Modifier.size(18.dp)
+        )
+        Spacer(modifier = Modifier.width(10.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(label, color = ColorText3, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            Text(
+                com.autoexpense.app.ui.cleanCategoryName(item.budget.category ?: "Overall Budget"),
+                color = ColorText1,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+        Text("${(item.percentage * 100).toInt().coerceAtLeast(0)}% Used", color = budgetProgressColor(item.percentage), fontSize = 13.sp, fontWeight = FontWeight.Bold)
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+@Composable
+private fun BudgetEditorSheet(
     existingBudget: BudgetEntity?,
     allBudgets: List<BudgetEntity>,
+    defaultPeriod: String,
+    externalError: String?,
     onDismiss: () -> Unit,
-    onSave: (String, String, Double) -> Unit,
-    externalError: String? = null
+    onSave: (String?, String, Double) -> Unit
 ) {
-    val customCategories by com.autoexpense.app.data.CustomCategoryRepository.customCategories.collectAsState(
-        initial = emptyList()
-    )
-    val baseCategories = listOf(
-        "Food & Dining",
-        "Transport",
-        "Groceries",
-        "Shopping",
-        "Entertainment",
-        "Healthcare",
-        "Rent / Bills",
-        "Travel",
-        "Personal Transfer"
-    )
-    val categories = (baseCategories + customCategories.map { it.name }).distinct()
+    val customCategories by com.autoexpense.app.data.CustomCategoryRepository.customCategories.collectAsState(initial = emptyList())
+    val categories = remember(customCategories) {
+        listOf(
+            "Overall Budget",
+            "Food & Dining",
+            "Shopping",
+            "Transportation",
+            "Entertainment",
+            "Bills",
+            "Travel",
+            "Fuel",
+            "Healthcare",
+            "Education",
+            "Recharge",
+            "Games",
+            "Utilities",
+            "Others"
+        ).plus(customCategories.map { it.name }).distinct()
+    }
 
-    var selectedCategory by remember {
-        mutableStateOf(existingBudget?.category ?: categories.first())
-    }
-    var selectedPeriod by remember {
-        mutableStateOf(existingBudget?.periodType ?: PeriodType.WEEKLY)
-    }
-    var amountText by remember {
-        mutableStateOf(if (existingBudget != null) existingBudget.limitAmount.toLong().toString() else "")
-    }
+    var selectedPeriod by remember(existingBudget, defaultPeriod) { mutableStateOf(existingBudget?.periodType ?: defaultPeriod) }
+    var selectedCategory by remember(existingBudget) { mutableStateOf(existingBudget?.category ?: "Overall Budget") }
+    var amountText by remember(existingBudget) { mutableStateOf(existingBudget?.limitAmount?.let { if (it % 1.0 == 0.0) it.toLong().toString() else it.toString() } ?: "") }
     var localError by remember { mutableStateOf<String?>(null) }
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
-    Dialog(onDismissRequest = onDismiss) {
-        Card(
-            colors = CardDefaults.cardColors(containerColor = ColorBg2),
-            shape = RoundedCornerShape(22.dp),
-            border = BorderStroke(1.dp, ColorBg3),
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = ColorBg2,
+        contentColor = ColorText1
+    ) {
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .verticalScroll(rememberScrollState())
+                .padding(horizontal = 20.dp, vertical = 12.dp)
         ) {
-            Column(modifier = Modifier.padding(20.dp)) {
-                Text(
-                    if (existingBudget != null) "Edit Category Budget" else "Add Category Budget",
-                    fontSize = 18.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = ColorText1
-                )
-                Spacer(modifier = Modifier.height(16.dp))
+            Text(if (existingBudget == null) "Create Budget" else "Edit Budget", color = ColorText1, fontSize = 24.sp, fontWeight = FontWeight.ExtraBold)
+            Spacer(modifier = Modifier.height(6.dp))
+            Text("Set a spending limit and AutoExpense will track progress automatically.", color = ColorText2, fontSize = 14.sp)
+            Spacer(modifier = Modifier.height(20.dp))
 
-                Text("Category", fontSize = 12.sp, color = ColorText2, fontWeight = FontWeight.Bold)
-                Spacer(modifier = Modifier.height(8.dp))
+            Text("Budget Type", color = ColorText2, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+            Spacer(modifier = Modifier.height(8.dp))
+            BudgetPeriodTabs(selectedPeriod = selectedPeriod, onPeriodChange = {
+                selectedPeriod = it
+                localError = null
+            })
 
-                FlowRow(
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    categories.forEach { cat ->
-                        val isSelected = selectedCategory == cat
-                        Box(
-                            modifier = Modifier
-                                .clip(CircleShape)
-                                .background(if (isSelected) ColorOrangeDim else ColorBg3)
-                                .border(1.dp, if (isSelected) ColorOrange else ColorBg3, CircleShape)
-                                .clickable {
-                                    selectedCategory = cat
-                                    localError = null
-                                }
-                                .padding(horizontal = 10.dp, vertical = 6.dp)
-                        ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(
-                                    imageVector = com.autoexpense.app.ui.getCategoryIcon(cat),
-                                    contentDescription = null,
-                                    tint = if (isSelected) ColorOrange else ColorText2,
-                                    modifier = Modifier.size(13.dp)
-                                )
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text(cat, fontSize = 11.sp, color = if (isSelected) ColorOrange else ColorText2)
+            Spacer(modifier = Modifier.height(18.dp))
+
+            Text("Category", color = ColorText2, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+            Spacer(modifier = Modifier.height(8.dp))
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                categories.forEach { category ->
+                    val selected = selectedCategory == category
+                    Row(
+                        modifier = Modifier
+                            .clip(CircleShape)
+                            .background(if (selected) ColorOrangeDim else ColorBg3.copy(alpha = 0.65f))
+                            .border(1.dp, if (selected) ColorOrange else ColorBg3, CircleShape)
+                            .clickable {
+                                selectedCategory = category
+                                localError = null
                             }
-                        }
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                Text("Period", fontSize = 12.sp, color = ColorText2, fontWeight = FontWeight.Bold)
-                Spacer(modifier = Modifier.height(8.dp))
-
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    val isWeekly = selectedPeriod == PeriodType.WEEKLY
-                    Button(
-                        onClick = {
-                            selectedPeriod = PeriodType.WEEKLY
-                            localError = null
-                        },
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = if (isWeekly) ColorOrange else ColorBg3
-                        ),
-                        shape = RoundedCornerShape(6.dp),
-                        modifier = Modifier.weight(1f)
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("Weekly", color = if (isWeekly) Color.White else ColorText2, fontSize = 12.sp)
-                    }
-
-                    val isMonthly = selectedPeriod == PeriodType.MONTHLY
-                    Button(
-                        onClick = {
-                            selectedPeriod = PeriodType.MONTHLY
-                            localError = null
-                        },
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = if (isMonthly) ColorOrange else ColorBg3
-                        ),
-                        shape = RoundedCornerShape(6.dp),
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Text("Monthly", color = if (isMonthly) Color.White else ColorText2, fontSize = 12.sp)
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                OutlinedTextField(
-                    value = amountText,
-                    onValueChange = {
-                        amountText = it
-                        localError = null
-                    },
-                    label = { Text("Limit Amount (₹)") },
-                    placeholder = { Text("e.g. 1000") },
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    singleLine = true,
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = ColorOrange,
-                        unfocusedBorderColor = ColorBg3,
-                        focusedLabelColor = ColorOrange,
-                        unfocusedLabelColor = ColorText2,
-                        focusedTextColor = ColorText1,
-                        unfocusedTextColor = ColorText1
-                    ),
-                    modifier = Modifier.fillMaxWidth()
-                )
-
-                if (localError != null || externalError != null) {
-                    Text(
-                        text = localError ?: externalError ?: "",
-                        color = ColorRed,
-                        fontSize = 12.sp,
-                        modifier = Modifier.padding(top = 4.dp)
-                    )
-                }
-
-                Spacer(modifier = Modifier.height(20.dp))
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End
-                ) {
-                    TextButton(onClick = onDismiss) {
-                        Text("Cancel", color = ColorText3)
-                    }
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Button(
-                        onClick = {
-                            val valAmt = amountText.toDoubleOrNull()
-                            if (valAmt == null || valAmt <= 0) {
-                                localError = "Amount must be greater than zero."
-                            } else {
-                                // Check duplicate before calling onSave
-                                val duplicate = allBudgets.any {
-                                    it.category == selectedCategory &&
-                                    it.periodType == selectedPeriod &&
-                                    it.id != (existingBudget?.id ?: 0L)
-                                }
-                                if (duplicate) {
-                                    localError = "A budget for this category and period already exists. Edit the existing budget instead."
-                                } else {
-                                    onSave(selectedCategory, selectedPeriod, valAmt)
-                                }
-                            }
-                        },
-                        colors = ButtonDefaults.buttonColors(containerColor = ColorOrange),
-                        shape = RoundedCornerShape(6.dp)
-                    ) {
-                        Text("Save", color = Color.White)
+                        Icon(
+                            imageVector = if (category == "Overall Budget") Icons.Default.AccountBalanceWallet else com.autoexpense.app.ui.getCategoryIcon(category),
+                            contentDescription = null,
+                            tint = if (selected) ColorOrange else ColorText2,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(category, color = if (selected) ColorOrange else ColorText2, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                     }
                 }
             }
+
+            Spacer(modifier = Modifier.height(18.dp))
+
+            OutlinedTextField(
+                value = amountText,
+                onValueChange = {
+                    amountText = it.filter { ch -> ch.isDigit() || ch == '.' }
+                    localError = null
+                },
+                label = { Text("Budget Amount") },
+                prefix = { Text("₹", color = ColorText2) },
+                placeholder = { Text("5000") },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                colors = budgetTextFieldColors(),
+                shape = RoundedCornerShape(16.dp),
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            val visibleError = localError ?: externalError
+            if (!visibleError.isNullOrBlank()) {
+                Spacer(modifier = Modifier.height(10.dp))
+                Text(visibleError, color = ColorRed, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+            }
+
+            Spacer(modifier = Modifier.height(22.dp))
+
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
+                TextButton(
+                    onClick = onDismiss,
+                    shape = RoundedCornerShape(14.dp),
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(50.dp)
+                ) {
+                    Text("Cancel", color = ColorText2, fontWeight = FontWeight.Bold)
+                }
+                Button(
+                    onClick = {
+                        val amount = amountText.toDoubleOrNull()
+                        val category = if (selectedCategory == "Overall Budget") null else selectedCategory
+                        val categoryKey = category ?: OVERALL_CATEGORY_KEY
+                        val duplicate = allBudgets.any {
+                            it.categoryKey == categoryKey &&
+                                it.periodType == selectedPeriod &&
+                                it.id != (existingBudget?.id ?: 0L)
+                        }
+                        when {
+                            amount == null || amount <= 0.0 -> localError = "Amount must be greater than zero."
+                            duplicate -> localError = "A budget for this category and period already exists."
+                            else -> onSave(category, selectedPeriod, amount)
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = ColorOrange),
+                    shape = RoundedCornerShape(14.dp),
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(50.dp)
+                ) {
+                    Text("Save", color = Color.White, fontWeight = FontWeight.Bold)
+                }
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
         }
     }
+}
+
+@Composable
+private fun budgetTextFieldColors() = OutlinedTextFieldDefaults.colors(
+    focusedBorderColor = ColorOrange,
+    unfocusedBorderColor = ColorBg3,
+    focusedLabelColor = ColorOrange,
+    unfocusedLabelColor = ColorText2,
+    focusedTextColor = ColorText1,
+    unfocusedTextColor = ColorText1,
+    focusedContainerColor = ColorBg2,
+    unfocusedContainerColor = ColorBg2
+)
+
+private fun budgetProgressColor(percentage: Float): Color {
+    return when {
+        percentage >= 0.9f -> ColorRed
+        percentage >= 0.7f -> ColorAmber
+        else -> ColorOrange
+    }
+}
+
+private fun periodLabel(periodType: String): String {
+    return if (periodType == PeriodType.WEEKLY) "Weekly" else "Monthly"
 }
 
 private fun formatRupee(amount: Double): String {
