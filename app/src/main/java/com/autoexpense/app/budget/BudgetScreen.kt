@@ -46,6 +46,53 @@ fun BudgetScreen(viewModel: BudgetViewModel) {
     val monthlyOverall = budgetsWithSpending.find { it.budget.category == null && it.budget.periodType == PeriodType.MONTHLY }
     val categoryBudgets = budgetsWithSpending.filter { it.budget.category != null }
 
+    if (budgetsWithSpending.isEmpty()) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(ColorBg0)
+                .padding(16.dp)
+        ) {
+            Text(
+                "Budget",
+                fontWeight = FontWeight.Bold,
+                color = ColorText1,
+                fontSize = 30.sp
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(
+                "Track your spending limits",
+                fontSize = 16.sp,
+                color = ColorText2
+            )
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(horizontal = 24.dp)) {
+                    Text(
+                        "No Budgets Yet",
+                        color = ColorText1,
+                        fontSize = 24.sp,
+                        fontWeight = FontWeight.Bold,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                    )
+                    Spacer(modifier = Modifier.height(14.dp))
+                    Text(
+                        "Set budgets for different categories to track\nyour spending and stay on target.",
+                        color = ColorText2,
+                        fontSize = 18.sp,
+                        lineHeight = 26.sp,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                    )
+                }
+            }
+        }
+        return
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -60,29 +107,22 @@ fun BudgetScreen(viewModel: BudgetViewModel) {
                 .padding(horizontal = 16.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Box(
-                modifier = Modifier
-                    .size(36.dp)
-                    .background(ColorOrangeDim, RoundedCornerShape(8.dp)),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    Icons.Outlined.AccountBalance,
-                    contentDescription = null,
-                    tint = ColorOrange,
-                    modifier = Modifier.size(20.dp)
-                )
-            }
-            Spacer(modifier = Modifier.width(8.dp))
             Text(
-                "Budget Management",
+                "Budget",
                 fontWeight = FontWeight.Bold,
                 color = ColorText1,
-                fontSize = 18.sp
+                fontSize = 30.sp
             )
         }
 
         Column(modifier = Modifier.padding(16.dp)) {
+            Text(
+                "Track your spending limits",
+                fontSize = 16.sp,
+                color = ColorText2,
+                modifier = Modifier.padding(bottom = 20.dp)
+            )
+
             Text(
                 "BUDGET OVERVIEW",
                 fontSize = 11.sp,
@@ -418,7 +458,7 @@ fun CategoryBudgetCard(
                     Icon(
                         imageVector = com.autoexpense.app.ui.getCategoryIcon(item.budget.category ?: "Unknown"),
                         contentDescription = null,
-                        tint = Color.White,
+                        tint = ColorOrange,
                         modifier = Modifier.size(18.dp)
                     )
                     Spacer(modifier = Modifier.width(6.dp))

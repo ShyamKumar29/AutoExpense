@@ -90,7 +90,7 @@ fun ExportScreen(
                     "Export Expense Report",
                     fontWeight = FontWeight.Bold,
                     color = ColorText1,
-                    fontSize = 18.sp
+                    fontSize = 24.sp
                 )
             }
 

@@ -297,7 +297,7 @@ fun PaymentsScreen(
     val tabs = listOf("bills" to "Bills", "subscriptions" to "Subscriptions")
     FinanceListScreenShell(
         title = "Payments",
-        subtitle = "Bills and recurring payments in one place"
+        subtitle = "Manage bills and subscriptions"
     ) {
         Row(
             modifier = Modifier
@@ -446,8 +446,8 @@ private fun FinanceListScreenShell(title: String, subtitle: String, content: @Co
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        Text(title, fontSize = 22.sp, fontWeight = FontWeight.Bold, color = ColorText1)
-        Text(subtitle, fontSize = 12.sp, color = ColorText2)
+        Text(title, fontSize = 30.sp, fontWeight = FontWeight.Bold, color = ColorText1)
+        Text(subtitle, fontSize = 16.sp, color = ColorText2)
         content()
     }
 }
@@ -456,9 +456,7 @@ private fun FinanceListScreenShell(title: String, subtitle: String, content: @Co
 private fun EmptyFinanceState(text: String) {
     Box(modifier = Modifier.fillMaxWidth().padding(vertical = 64.dp), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Icon(Icons.AutoMirrored.Outlined.ReceiptLong, contentDescription = null, tint = ColorText3, modifier = Modifier.size(42.dp))
-            Spacer(modifier = Modifier.height(10.dp))
-            Text(text, color = ColorText2, fontSize = 13.sp)
+            Text(text.substringBefore("\n"), color = ColorText2, fontSize = 18.sp)
         }
     }
 }

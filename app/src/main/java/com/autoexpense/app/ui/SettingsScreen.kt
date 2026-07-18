@@ -11,11 +11,13 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.ArrowForwardIos
+import androidx.compose.material.icons.automirrored.outlined.HelpOutline
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.outlined.DeleteForever
 import androidx.compose.material.icons.outlined.FileDownload
 import androidx.compose.material.icons.outlined.NotificationsActive
 import androidx.compose.material.icons.outlined.Palette
+import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material.icons.outlined.PrivacyTip
 import androidx.compose.material.icons.outlined.Save
 import androidx.compose.material.icons.outlined.Security
@@ -60,6 +62,7 @@ fun SettingsScreen(
     val selectedTheme by userPrefs.theme.collectAsState(initial = "system")
     val budgetThreshold by userPrefs.budgetWarningThreshold.collectAsState(initial = 0.7f)
     val isHapticEnabled by userPrefs.isHapticFeedbackEnabled.collectAsState(initial = true)
+    val userName by userPrefs.userName.collectAsState(initial = "User")
     val notificationEnabled by profileViewModel.notificationAccessEnabled.collectAsState()
     val isPaymentSetupCompleted by userPrefs.isPaymentSetupCompleted.collectAsState(initial = false)
 
@@ -120,7 +123,7 @@ fun SettingsScreen(
                 text = "Settings",
                 fontWeight = FontWeight.Bold,
                 color = ColorText1,
-                fontSize = 18.sp
+                fontSize = 30.sp
             )
         }
 
@@ -466,6 +469,15 @@ fun SettingsScreen(
                     HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp), color = ColorBg3)
 
                     Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Outlined.Person, contentDescription = null, tint = ColorOrange, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Profile", fontSize = 14.sp, color = ColorText1, modifier = Modifier.weight(1f))
+                        Text(if (userName.isBlank()) "User" else userName, fontSize = 13.sp, color = ColorText2)
+                    }
+
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp), color = ColorBg3)
+
+                    Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.Outlined.PrivacyTip, contentDescription = null, tint = ColorGreen, modifier = Modifier.size(18.dp))
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
@@ -474,6 +486,24 @@ fun SettingsScreen(
                             fontWeight = FontWeight.Medium,
                             color = ColorGreen
                         )
+                    }
+
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp), color = ColorBg3)
+
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Outlined.PrivacyTip, contentDescription = null, tint = ColorOrange, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Privacy Policy", fontSize = 14.sp, color = ColorText1, modifier = Modifier.weight(1f))
+                        Text("Local-first", fontSize = 13.sp, color = ColorText2)
+                    }
+
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp), color = ColorBg3)
+
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.AutoMirrored.Outlined.HelpOutline, contentDescription = null, tint = ColorOrange, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Support / Help", fontSize = 14.sp, color = ColorText1, modifier = Modifier.weight(1f))
+                        Text("Guide", fontSize = 13.sp, color = ColorText2)
                     }
                 }
             }

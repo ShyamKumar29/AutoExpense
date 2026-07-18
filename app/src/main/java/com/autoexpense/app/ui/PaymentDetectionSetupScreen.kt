@@ -165,7 +165,7 @@ fun PaymentDetectionSetupScreen(
                 text = "Keep payment detection reliable",
                 fontWeight = FontWeight.Bold,
                 color = ColorText1,
-                fontSize = 18.sp
+                fontSize = 24.sp
             )
         }
 

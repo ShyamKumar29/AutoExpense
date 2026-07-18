@@ -49,6 +49,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
@@ -57,6 +58,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -111,49 +113,51 @@ import com.autoexpense.app.budget.BudgetScreen
 import com.autoexpense.app.ui.SettingsScreen
 import com.autoexpense.app.ui.PaymentDetectionSetupScreen
 import com.autoexpense.app.ui.AppHaptic
+import com.autoexpense.app.ui.components.AeGradientCard
+import com.autoexpense.app.ui.theme.AeGradients
 
 // ── COLOR PALETTE ──────────────────────────────────────────────────────────
-var ColorBg0 by mutableStateOf(Color(0xFF0D0D0F))
-var ColorBg1 by mutableStateOf(Color(0xFF13141A))
-var ColorBg2 by mutableStateOf(Color(0xFF1A1B24))
-var ColorBg3 by mutableStateOf(Color(0xFF22232F))
-var ColorBg4 by mutableStateOf(Color(0xFF2A2B3A))
-val ColorOrange = Color(0xFFFF6B2C)
-val ColorOrangeDim = Color(0x26FF6B2C)
-val ColorOrangeDark = Color(0xFFCC4A14)
-var ColorText1 by mutableStateOf(Color(0xFFF0F0F5))
-var ColorText2 by mutableStateOf(Color(0xFF9999B0))
-var ColorText3 by mutableStateOf(Color(0xFF5A5A70))
-var ColorGreen by mutableStateOf(Color(0xFF22C55E))
+var ColorBg0 by mutableStateOf(Color(0xFF07111F))
+var ColorBg1 by mutableStateOf(Color(0xFF0B1628))
+var ColorBg2 by mutableStateOf(Color(0xFF101D33))
+var ColorBg3 by mutableStateOf(Color(0xFF21304A))
+var ColorBg4 by mutableStateOf(Color(0xFF314467))
+val ColorOrange = Color(0xFF5B7FFF)
+val ColorOrangeDim = Color(0x295B7FFF)
+val ColorOrangeDark = Color(0xFF3D4785)
+var ColorText1 by mutableStateOf(Color(0xFFF8FAFC))
+var ColorText2 by mutableStateOf(Color(0xFFC5CEDD))
+var ColorText3 by mutableStateOf(Color(0xFF8E9AAF))
+var ColorGreen by mutableStateOf(Color(0xFF10B981))
 var ColorRed by mutableStateOf(Color(0xFFEF4444))
 var ColorAmber by mutableStateOf(Color(0xFFF59E0B))
-val ColorBlue = Color(0xFF3B82F6)
+val ColorBlue = Color(0xFF5B7FFF)
 
 fun updateAppThemeColors(isDark: Boolean) {
     if (isDark) {
-        ColorBg0 = Color(0xFF0D0D0F)
-        ColorBg1 = Color(0xFF13141A)
-        ColorBg2 = Color(0xFF1A1B24)
-        ColorBg3 = Color(0xFF22232F)
-        ColorBg4 = Color(0xFF2A2B3A)
-        ColorText1 = Color(0xFFF0F0F5)
-        ColorText2 = Color(0xFF9999B0)
-        ColorText3 = Color(0xFF5A5A70)
-        ColorGreen = Color(0xFF22C55E)
+        ColorBg0 = Color(0xFF07111F)
+        ColorBg1 = Color(0xFF0B1628)
+        ColorBg2 = Color(0xFF101D33)
+        ColorBg3 = Color(0xFF21304A)
+        ColorBg4 = Color(0xFF314467)
+        ColorText1 = Color(0xFFF8FAFC)
+        ColorText2 = Color(0xFFC5CEDD)
+        ColorText3 = Color(0xFF8E9AAF)
+        ColorGreen = Color(0xFF10B981)
         ColorRed = Color(0xFFEF4444)
         ColorAmber = Color(0xFFF59E0B)
     } else {
-        ColorBg0 = Color(0xFFF7F7F9)
-        ColorBg1 = Color(0xFFF0F1F5)
+        ColorBg0 = Color(0xFFF5F7FA)
+        ColorBg1 = Color(0xFFFFFFFF)
         ColorBg2 = Color(0xFFFFFFFF)
-        ColorBg3 = Color(0xFFE2E3E8)
-        ColorBg4 = Color(0xFFD6D8E2)
-        ColorText1 = Color(0xFF17171C)
-        ColorText2 = Color(0xFF686875)
-        ColorText3 = Color(0xFF8A8A99)
-        ColorGreen = Color(0xFF16A765)
-        ColorRed = Color(0xFFD64545)
-        ColorAmber = Color(0xFFD98A00)
+        ColorBg3 = Color(0xFFE5E7EB)
+        ColorBg4 = Color(0xFFD1D5DB)
+        ColorText1 = Color(0xFF1F2937)
+        ColorText2 = Color(0xFF6B7280)
+        ColorText3 = Color(0xFF9CA3AF)
+        ColorGreen = Color(0xFF10B981)
+        ColorRed = Color(0xFFEF4444)
+        ColorAmber = Color(0xFFF59E0B)
     }
 }
 
@@ -997,7 +1001,10 @@ fun MainAppContainer(
             bottomBar = {
                 AppBottomBar(
                     activeScreen = activeScreen,
-                    onNavigate = { activeScreen = it },
+                    onNavigate = {
+                        if (it == "settings") settingsReturnScreen = "dashboard"
+                        activeScreen = it
+                    },
                     reviewCount = reviewCount
                 )
             },
@@ -1114,100 +1121,57 @@ fun AppBottomBar(
     onNavigate: (String) -> Unit,
     reviewCount: Int
 ) {
-    NavigationBar(
-        containerColor = ColorBg1,
-        tonalElevation = 8.dp
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(72.dp)
+            .background(ColorBg1)
+            .border(BorderStroke(1.dp, ColorBg3))
+            .padding(horizontal = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
     ) {
-        NavigationBarItem(
-            selected = activeScreen == "dashboard",
-            onClick = { onNavigate("dashboard") },
-            icon = { Icon(Icons.Default.Dashboard, contentDescription = "Dashboard") },
-            label = { BottomNavLabel("Dashboard") },
-            colors = NavigationBarItemDefaults.colors(
-                selectedIconColor = ColorOrange,
-                selectedTextColor = ColorOrange,
-                unselectedIconColor = ColorText2,
-                unselectedTextColor = ColorText2,
-                indicatorColor = ColorOrangeDim
-            )
-        )
-        NavigationBarItem(
-            selected = activeScreen == "receipts",
-            onClick = { onNavigate("receipts") },
-            icon = { Icon(Icons.AutoMirrored.Filled.ReceiptLong, contentDescription = "Receipts") },
-            label = { BottomNavLabel("Receipts") },
-            colors = NavigationBarItemDefaults.colors(
-                selectedIconColor = ColorOrange,
-                selectedTextColor = ColorOrange,
-                unselectedIconColor = ColorText2,
-                unselectedTextColor = ColorText2,
-                indicatorColor = ColorOrangeDim
-            )
-        )
-        NavigationBarItem(
-            selected = activeScreen == "review",
-            onClick = { onNavigate("review") },
-            icon = {
-                BadgedBox(
-                    badge = {
-                        if (reviewCount > 0) {
-                            Badge(containerColor = ColorOrange) {
-                                Text(reviewCount.toString(), color = Color.White)
-                            }
-                        }
-                    }
-                ) {
-                    Icon(Icons.Default.RateReview, contentDescription = "Needs Review")
-                }
-            },
-            label = { BottomNavLabel("Review") },
-            colors = NavigationBarItemDefaults.colors(
-                selectedIconColor = ColorOrange,
-                selectedTextColor = ColorOrange,
-                unselectedIconColor = ColorText2,
-                unselectedTextColor = ColorText2,
-                indicatorColor = ColorOrangeDim
-            )
-        )
-        NavigationBarItem(
-            selected = activeScreen == "budget",
-            onClick = { onNavigate("budget") },
-            icon = { Icon(Icons.Default.AccountBalance, contentDescription = "Budget") },
-            label = { BottomNavLabel("Budget") },
-            colors = NavigationBarItemDefaults.colors(
-                selectedIconColor = ColorOrange,
-                selectedTextColor = ColorOrange,
-                unselectedIconColor = ColorText2,
-                unselectedTextColor = ColorText2,
-                indicatorColor = ColorOrangeDim
-            )
-        )
-        NavigationBarItem(
-            selected = activeScreen == "payments",
-            onClick = { onNavigate("payments") },
-            icon = { Icon(Icons.Default.Payments, contentDescription = "Payments") },
-            label = { BottomNavLabel("Payments") },
-            colors = NavigationBarItemDefaults.colors(
-                selectedIconColor = ColorOrange,
-                selectedTextColor = ColorOrange,
-                unselectedIconColor = ColorText2,
-                unselectedTextColor = ColorText2,
-                indicatorColor = ColorOrangeDim
-            )
-        )
-        NavigationBarItem(
-            selected = activeScreen == "profile",
-            onClick = { onNavigate("profile") },
-            icon = { Icon(Icons.Default.Person, contentDescription = "Profile") },
-            label = { BottomNavLabel("Profile") },
-            colors = NavigationBarItemDefaults.colors(
-                selectedIconColor = ColorOrange,
-                selectedTextColor = ColorOrange,
-                unselectedIconColor = ColorText2,
-                unselectedTextColor = ColorText2,
-                indicatorColor = ColorOrangeDim
-            )
-        )
+        listOf(
+            "dashboard" to "Dashboard",
+            "receipts" to "Transactions",
+            "review" to "Review",
+            "budget" to "Budget",
+            "payments" to "Payments"
+        ).forEach { (route, label) ->
+            val selected = activeScreen == route
+            val icon = when (route) {
+                "dashboard" -> Icons.Default.Home
+                "receipts" -> Icons.AutoMirrored.Filled.ReceiptLong
+                "review" -> Icons.Default.CheckCircle
+                "budget" -> Icons.Default.AccountBalanceWallet
+                else -> Icons.Default.CreditCard
+            }
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .height(58.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable { onNavigate(route) },
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
+            ) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = label,
+                    tint = if (selected) ColorOrange else ColorText3,
+                    modifier = Modifier.size(20.dp)
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = if (route == "review" && reviewCount > 0) "$label ($reviewCount)" else label,
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = if (selected) ColorOrange else ColorText3,
+                    maxLines = 1,
+                    softWrap = false,
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                )
+            }
+        }
     }
 }
 
@@ -1216,10 +1180,13 @@ fun AppBottomBar(
 fun BottomNavLabel(text: String) {
     Text(
         text = text,
-        fontSize = 9.sp,
+        fontSize = 8.sp,
+        lineHeight = 9.sp,
         fontWeight = FontWeight.SemiBold,
         maxLines = 1,
-        softWrap = false
+        softWrap = false,
+        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+        modifier = Modifier.fillMaxWidth()
     )
 }
 
@@ -1242,16 +1209,9 @@ fun DashboardScreen(
 ) {
     var searchQuery by remember { mutableStateOf("") }
     var chartType by remember { mutableStateOf("weekly") }
-    var analyticsTab by remember { mutableStateOf("cash") }
 
     val transactions by viewModel.transactions.collectAsState()
     val totalSpent by viewModel.totalSpent.collectAsState()
-    val vsLastMonth by viewModel.vsLastMonth.collectAsState()
-    val topCategory by viewModel.topCategory.collectAsState()
-    val upiSources by viewModel.upiSources.collectAsState()
-    val weeklyChartData by viewModel.weeklyChartData.collectAsState()
-    val monthlyChartData by viewModel.monthlyChartData.collectAsState()
-    val needsReviewAmount by viewModel.needsReviewAmount.collectAsState()
     val pendingReviewCount by viewModel.pendingReviewCount.collectAsState()
 
     Column(
@@ -1272,40 +1232,39 @@ fun DashboardScreen(
         }
 
         Column(modifier = Modifier.padding(horizontal = 16.dp)) {
-            Spacer(modifier = Modifier.height(20.dp))
+            Spacer(modifier = Modifier.height(6.dp))
 
-            // METRICS GRID
-            MetricsRow(
+            val confirmedForDashboard = remember(transactions) {
+                DashboardViewModel.computeConfirmedOutgoing(transactions)
+            }
+            val totalSpentValue = remember(totalSpent) { DashboardViewModel.parseAmount(totalSpent) }
+            val avgExpense = if (confirmedForDashboard.isNotEmpty()) totalSpentValue / confirmedForDashboard.size else 0.0
+
+            DashboardHeroCard(
                 totalSpent = totalSpent,
-                vsLastMonthText = vsLastMonth.first,
-                vsLastMonthColor = vsLastMonth.second,
-                needsReviewAmount = needsReviewAmount,
-                reviewCount = pendingReviewCount,
-                topCatLabel = topCategory.label,
-                topCatSubText = topCategory.subText,
-                upiCountLabel = upiSources.label,
-                upiNamesLabel = upiSources.subText
+                pendingReviewCount = pendingReviewCount,
+                monthTransactionCount = confirmedForDashboard.size,
+                transactions = confirmedForDashboard
             )
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(10.dp))
 
-            val currentChartData = if (chartType == "weekly") weeklyChartData else monthlyChartData
-            AnalyticsSection(
-                selectedTab = analyticsTab,
-                onTabChange = { analyticsTab = it },
-                chartData = currentChartData,
-                chartType = chartType,
-                onChartTypeChange = { chartType = it },
+            DashboardSimpleStats(
+                transactionCount = confirmedForDashboard.size,
+                averageExpense = DashboardViewModel.formatIndianCurrencyValue(avgExpense)
+            )
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            SpendingByCategoryCard(
                 transactions = transactions,
                 periodType = chartType,
-                onNavigateToReceiptsWithFilter = onNavigateToReceiptsWithFilter
+                onPeriodChange = { chartType = it }
             )
 
-            Spacer(modifier = Modifier.height(22.dp))
+            Spacer(modifier = Modifier.height(10.dp))
 
-            com.autoexpense.app.finance.UpcomingDashboardCard(
-                onViewAll = { onNavigate("payments") }
-            )
+            DashboardTopCategories(transactions = transactions, periodType = chartType)
 
             Spacer(modifier = Modifier.height(22.dp))
 
@@ -1353,17 +1312,474 @@ fun DashboardScreen(
 }
 
 @Composable
+fun DashboardHeroCard(
+    totalSpent: String,
+    pendingReviewCount: Int,
+    monthTransactionCount: Int,
+    transactions: List<Transaction>
+) {
+    val trendPoints = remember(transactions) { computeHeroTrendPoints(transactions) }
+    val lineProgress by animateFloatAsState(
+        targetValue = if (trendPoints.isNotEmpty()) 1f else 0f,
+        animationSpec = tween(durationMillis = 900, easing = androidx.compose.animation.core.FastOutSlowInEasing),
+        label = "heroTrendProgress"
+    )
+
+    Card(
+        colors = CardDefaults.cardColors(containerColor = Color.Transparent),
+        shape = RoundedCornerShape(22.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(22.dp))
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = 168.dp)
+                .background(
+                    Brush.linearGradient(
+                        listOf(Color(0xFF243E99), Color(0xFF081433)),
+                        start = Offset(0f, 0f),
+                        end = Offset(900f, 520f)
+                    )
+                )
+                .border(1.dp, ColorOrange.copy(alpha = 0.45f), RoundedCornerShape(22.dp))
+                .padding(horizontal = 22.dp, vertical = 20.dp)
+        ) {
+            if (trendPoints.isNotEmpty()) {
+                HeroTrendLine(
+                    points = trendPoints,
+                    progress = lineProgress,
+                    modifier = Modifier
+                        .align(Alignment.CenterEnd)
+                        .fillMaxWidth(0.40f)
+                        .height(82.dp)
+                )
+            }
+
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Text(
+                    "Total Spent",
+                    color = Color.White.copy(alpha = 0.78f),
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Medium
+                )
+                Spacer(modifier = Modifier.height(10.dp))
+                AnimatedAmountText(
+                    targetFormatted = totalSpent,
+                    fontSize = 39.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    color = Color.White
+                )
+                Spacer(modifier = Modifier.height(18.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                    HeroMetricChip(
+                        icon = Icons.AutoMirrored.Filled.ReceiptLong,
+                        iconTint = Color(0xFFB45BFF),
+                        label = "Pending Review",
+                        value = pendingReviewCount.toString()
+                    )
+                    HeroMetricChip(
+                        icon = Icons.Default.Dashboard,
+                        iconTint = ColorOrange,
+                        label = "Transactions",
+                        value = monthTransactionCount.toString()
+                    )
+                }
+            }
+        }
+    }
+}
+
+private fun computeHeroTrendPoints(transactions: List<Transaction>, nowMs: Long = System.currentTimeMillis()): List<Float> {
+    val (monthStart, monthEnd) = DashboardViewModel.getCurrentMonthBounds(nowMs)
+    val monthTxns = transactions
+        .filter { it.timestamp in monthStart..monthEnd }
+        .sortedBy { it.timestamp }
+    val activeDays = monthTxns.map {
+        val cal = java.util.Calendar.getInstance().apply { timeInMillis = it.timestamp }
+        cal.get(java.util.Calendar.DAY_OF_MONTH)
+    }.distinct().size
+    if (monthTxns.size < 4 || activeDays < 3) return emptyList()
+
+    val cal = java.util.Calendar.getInstance().apply { timeInMillis = nowMs }
+    val today = cal.get(java.util.Calendar.DAY_OF_MONTH)
+    val daily = FloatArray(today.coerceAtLeast(1)) { 0f }
+    monthTxns.forEach { transaction ->
+        cal.timeInMillis = transaction.timestamp
+        val dayIndex = (cal.get(java.util.Calendar.DAY_OF_MONTH) - 1).coerceIn(daily.indices)
+        daily[dayIndex] += DashboardViewModel.parseAmount(transaction.amount).toFloat()
+    }
+    var running = 0f
+    return daily.map { amount ->
+        running += amount
+        running
+    }.filter { it >= 0f }
+}
+
+@Composable
+private fun HeroMetricChip(
+    icon: ImageVector,
+    iconTint: Color,
+    label: String,
+    value: String
+) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Box(
+            modifier = Modifier
+                .size(44.dp)
+                .clip(CircleShape)
+                .background(iconTint.copy(alpha = 0.20f)),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(icon, contentDescription = null, tint = iconTint, modifier = Modifier.size(23.dp))
+        }
+        Spacer(modifier = Modifier.width(10.dp))
+        Column {
+            Text(label, color = Color.White.copy(alpha = 0.84f), fontSize = 13.sp, fontWeight = FontWeight.Medium)
+            Text(value, color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+        }
+    }
+}
+
+@Composable
+private fun HeroTrendLine(
+    points: List<Float>,
+    progress: Float,
+    modifier: Modifier = Modifier
+) {
+    Canvas(modifier = modifier) {
+        if (points.size < 3) return@Canvas
+        val max = points.maxOrNull()?.takeIf { it > 0f } ?: return@Canvas
+        val min = points.minOrNull() ?: 0f
+        val range = (max - min).takeIf { it > 0f } ?: max
+        val usableW = size.width
+        val usableH = size.height * 0.72f
+        val topPad = size.height * 0.12f
+        val step = usableW / (points.size - 1).coerceAtLeast(1)
+        val offsets = points.mapIndexed { index, value ->
+            val x = index * step
+            val normalized = (value - min) / range
+            val y = topPad + usableH - (normalized * usableH)
+            Offset(x, y)
+        }
+        val visibleCount = (offsets.size * progress).toInt().coerceIn(2, offsets.size)
+        val visible = offsets.take(visibleCount)
+        val path = Path().apply {
+            moveTo(visible.first().x, visible.first().y)
+            for (i in 1 until visible.size) {
+                val previous = visible[i - 1]
+                val current = visible[i]
+                val midX = (previous.x + current.x) / 2f
+                quadraticTo(previous.x, previous.y, midX, (previous.y + current.y) / 2f)
+                quadraticTo(midX, (previous.y + current.y) / 2f, current.x, current.y)
+            }
+        }
+        val fillPath = Path().apply {
+            addPath(path)
+            lineTo(visible.last().x, size.height)
+            lineTo(visible.first().x, size.height)
+            close()
+        }
+        drawPath(
+            path = fillPath,
+            brush = Brush.verticalGradient(
+                listOf(ColorOrange.copy(alpha = 0.24f), ColorOrange.copy(alpha = 0.02f))
+            )
+        )
+        drawPath(
+            path = path,
+            color = ColorOrange,
+            style = Stroke(width = 2.5.dp.toPx(), cap = androidx.compose.ui.graphics.StrokeCap.Round)
+        )
+        drawCircle(ColorOrange, radius = 4.5.dp.toPx(), center = visible.last())
+    }
+}
+
+@Composable
+fun DashboardSimpleStats(
+    transactionCount: Int,
+    averageExpense: String
+) {
+    Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
+        DashboardSmallStatCard(
+            value = transactionCount.toString(),
+            label = "Transactions",
+            icon = Icons.AutoMirrored.Filled.ReceiptLong,
+            modifier = Modifier.weight(1f)
+        )
+        DashboardSmallStatCard(
+            value = averageExpense,
+            label = "Avg. Expense",
+            icon = Icons.Default.Payments,
+            modifier = Modifier.weight(1f)
+        )
+    }
+}
+
+@Composable
+private fun DashboardSmallStatCard(
+    value: String,
+    label: String,
+    icon: ImageVector,
+    modifier: Modifier = Modifier
+) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = ColorBg2),
+        shape = RoundedCornerShape(18.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = 5.dp),
+        border = BorderStroke(1.dp, ColorBg3),
+        modifier = modifier.height(100.dp)
+    ) {
+        BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+            val compact = maxWidth < 165.dp
+            val iconBoxSize = if (compact) 42.dp else 48.dp
+            val iconSize = if (compact) 24.dp else 28.dp
+            val horizontalPadding = if (compact) 12.dp else 16.dp
+            val iconGap = if (compact) 8.dp else 12.dp
+            val valueSize = if (compact) 21.sp else 23.sp
+            val labelSize = if (compact) 12.sp else 13.sp
+
+            Row(
+                modifier = Modifier.fillMaxSize().padding(horizontal = horizontalPadding, vertical = 14.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(iconBoxSize)
+                        .clip(CircleShape)
+                        .background(ColorOrange.copy(alpha = 0.16f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = icon,
+                        contentDescription = null,
+                        tint = ColorOrange,
+                        modifier = Modifier.size(iconSize)
+                    )
+                }
+                Spacer(modifier = Modifier.width(iconGap))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        value,
+                        color = ColorText1,
+                        fontSize = valueSize,
+                        fontWeight = FontWeight.ExtraBold,
+                        maxLines = 1,
+                        softWrap = false
+                    )
+                    Spacer(modifier = Modifier.height(3.dp))
+                    Text(
+                        label,
+                        color = ColorText2,
+                        fontSize = labelSize,
+                        maxLines = 1,
+                        softWrap = false
+                    )
+                }
+            }
+        }
+    }
+}
+
+private fun dashboardCategoryPalette(): List<Color> = listOf(
+    ColorOrange,
+    Color(0xFFFF9F1C),
+    Color(0xFF2DD4A3),
+    Color(0xFF4FC3F7),
+    Color(0xFFB45BFF),
+    Color(0xFFFF5D8F),
+    Color(0xFF26A69A),
+    Color(0xFF8D6E63),
+    Color(0xFF78909C)
+)
+
+private fun computeCategorySpendingItems(
+    transactions: List<Transaction>,
+    periodType: String,
+    nowMs: Long = System.currentTimeMillis()
+): Pair<List<CategorySpendingItem>, Double> {
+    val confirmed = DashboardViewModel.computeConfirmedOutgoing(transactions)
+    val bounds = if (periodType == "weekly") {
+        val mon = DashboardViewModel.getMondayOfWeek(nowMs)
+        Pair(mon, mon + 7L * 86400000L - 1L)
+    } else {
+        DashboardViewModel.getCurrentMonthBounds(nowMs)
+    }
+    val periodTxns = confirmed.filter { it.timestamp in bounds.first..bounds.second }
+    if (periodTxns.isEmpty()) return Pair(emptyList(), 0.0)
+
+    val total = periodTxns.sumOf { DashboardViewModel.parseAmount(it.amount) }
+    if (total <= 0.0) return Pair(emptyList(), 0.0)
+
+    val palette = dashboardCategoryPalette()
+    val items = periodTxns
+        .groupBy { com.autoexpense.app.ui.cleanCategoryName(it.category).ifBlank { "Other" } }
+        .map { (catName, txList) ->
+            val catSum = txList.sumOf { DashboardViewModel.parseAmount(it.amount) }
+            val pct = ((catSum / total) * 100).toFloat()
+            Triple(catName, catSum, pct)
+        }
+        .filter { it.second > 0.0 }
+        .sortedByDescending { it.second }
+        .mapIndexed { idx, triple ->
+            CategorySpendingItem(
+                categoryName = triple.first,
+                amount = triple.second,
+                percentage = triple.third,
+                color = palette[idx % palette.size]
+            )
+        }
+    return Pair(items, total)
+}
+
+@Composable
+fun DashboardTopCategories(transactions: List<Transaction>, periodType: String) {
+    val (categories, totalAmount) = remember(transactions, periodType) {
+        computeCategorySpendingItems(transactions, periodType)
+    }
+    if (categories.isEmpty() || totalAmount <= 0.0) return
+
+    Card(
+        colors = CardDefaults.cardColors(containerColor = ColorBg2),
+        shape = RoundedCornerShape(22.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = 5.dp),
+        border = BorderStroke(1.dp, ColorBg3),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+            val compact = maxWidth < 310.dp
+            val iconBox = if (compact) 42.dp else 46.dp
+            val iconSize = if (compact) 22.dp else 24.dp
+            val titleSize = if (compact) 15.sp else 16.sp
+            val amountSize = if (compact) 12.sp else 14.sp
+            val percentageSize = if (compact) 12.sp else 13.sp
+            val horizontalGap = if (compact) 10.dp else 14.dp
+        Column(modifier = Modifier.padding(horizontal = 18.dp, vertical = 16.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("Top Categories", color = ColorText1, fontSize = 20.sp, fontWeight = FontWeight.ExtraBold)
+                Text("See All", color = ColorOrange, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+            }
+            Spacer(modifier = Modifier.height(12.dp))
+
+            categories.take(4).forEachIndexed { index, item ->
+                val progress by animateFloatAsState(
+                    targetValue = (item.percentage / 100f).coerceIn(0f, 1f),
+                    animationSpec = tween(durationMillis = 700, delayMillis = index * 90),
+                    label = "topCategoryProgress"
+                )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(iconBox)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(item.color.copy(alpha = 0.14f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = com.autoexpense.app.ui.getCategoryIcon(item.categoryName),
+                            contentDescription = null,
+                            tint = item.color,
+                            modifier = Modifier.size(iconSize)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(horizontalGap))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                item.categoryName,
+                                color = ColorText1,
+                                fontSize = titleSize,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    DashboardViewModel.formatIndianCurrencyValue(item.amount),
+                                    color = ColorText1,
+                                    fontSize = amountSize,
+                                    fontWeight = FontWeight.Bold,
+                                    maxLines = 1,
+                                    softWrap = false
+                                )
+                                Spacer(modifier = Modifier.width(if (compact) 8.dp else 14.dp))
+                                Text(
+                                    "${String.format(java.util.Locale.US, "%.1f", item.percentage)}%",
+                                    color = ColorText2,
+                                    fontSize = percentageSize,
+                                    fontWeight = FontWeight.Medium,
+                                    maxLines = 1,
+                                    softWrap = false
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                                    contentDescription = null,
+                                    tint = ColorText3,
+                                    modifier = Modifier.size(if (compact) 18.dp else 20.dp)
+                                )
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(3.dp)
+                                .clip(CircleShape)
+                                .background(ColorBg3.copy(alpha = 0.75f))
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth(progress)
+                                    .fillMaxHeight()
+                                    .background(item.color)
+                            )
+                        }
+                    }
+                }
+            }
+        }
+        }
+    }
+}
+
+@Composable
 fun DashboardTopBar(
     userName: String = "",
     totalSpent: String = "₹0",
     onProfileClick: () -> Unit = {}
 ) {
-    val displayName = if (userName.isNotBlank() && userName != "User") userName.trim() else "there"
+    val displayName = if (userName.isNotBlank() && userName != "User") userName.trim() else "User"
+    val greeting = remember {
+        val hour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
+        when (hour) {
+            in 5..11 -> "Good Morning,"
+            in 12..16 -> "Good Afternoon,"
+            else -> "Good Evening,"
+        }
+    }
 
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .background(Brush.verticalGradient(listOf(ColorBg1, ColorBg0)))
+            .background(ColorBg0)
             .padding(horizontal = 20.dp, vertical = 24.dp)
     ) {
         Row(
@@ -1372,34 +1788,40 @@ fun DashboardTopBar(
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-            com.autoexpense.app.ui.AutoExpenseLogo(size = 40.dp, tint = ColorOrange)
-            Spacer(modifier = Modifier.width(14.dp))
             Column {
-                Text("Hello, $displayName 👋", fontWeight = FontWeight.ExtraBold, color = ColorText1, fontSize = 24.sp)
-                Spacer(modifier = Modifier.height(6.dp))
-                Text("You spent $totalSpent this month.", color = ColorText2, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                Text(greeting, fontWeight = FontWeight.Medium, color = ColorText2, fontSize = 18.sp)
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(displayName, fontWeight = FontWeight.ExtraBold, color = ColorText1, fontSize = 30.sp)
+                Spacer(modifier = Modifier.height(4.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Outlined.CalendarToday,
+                        contentDescription = null,
+                        tint = ColorText2,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(java.text.SimpleDateFormat("MMMM yyyy", java.util.Locale.US).format(java.util.Date()), color = ColorText2, fontSize = 16.sp, fontWeight = FontWeight.Medium)
+                }
             }
         }
 
         Row(verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = {}) {
-                Icon(Icons.Outlined.Notifications, contentDescription = "Notifications", tint = ColorText2)
-            }
-            Spacer(modifier = Modifier.width(4.dp))
             Box(
                 modifier = Modifier
-                    .size(42.dp)
+                    .size(58.dp)
                     .clip(CircleShape)
-                    .background(Brush.linearGradient(listOf(ColorOrange, ColorOrangeDark)))
+                    .background(ColorBg2)
+                    .border(1.dp, ColorBg3, CircleShape)
                     .clickable { onProfileClick() },
                 contentAlignment = Alignment.Center
             ) {
-                val initials = if (userName.isNotBlank() && userName != "User") {
-                    userName.trim().take(2).uppercase()
-                } else {
-                    "AE"
-                }
-                Text(initials, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                Icon(
+                    imageVector = Icons.Default.Person,
+                    contentDescription = "Profile",
+                    tint = ColorOrange,
+                    modifier = Modifier.size(30.dp)
+                )
             }
         }
     }
@@ -1514,52 +1936,56 @@ fun MetricCard(
     icon: ImageVector? = null
 ) {
     Card(
-        colors = CardDefaults.cardColors(containerColor = Color.Transparent),
+        colors = CardDefaults.cardColors(containerColor = ColorBg2),
         shape = RoundedCornerShape(22.dp),
         border = BorderStroke(1.dp, ColorBg3.copy(alpha = 0.8f)),
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
         modifier = modifier
     ) {
-        Column(
+        Box(
             modifier = Modifier
-                .background(
-                    Brush.radialGradient(
-                        colors = listOf(
-                            ColorOrange.copy(alpha = 0.10f),
-                            ColorBg2.copy(alpha = 0.98f),
-                            ColorBg2
-                        ),
-                        center = Offset(40f, 0f),
-                        radius = 360f
+                .fillMaxWidth()
+                .drawBehind {
+                    drawRoundRect(
+                        color = Color.White.copy(alpha = 0.035f),
+                        topLeft = Offset(1.dp.toPx(), 1.dp.toPx()),
+                        size = Size(size.width - 2.dp.toPx(), 20.dp.toPx()),
+                        cornerRadius = CornerRadius(22.dp.toPx(), 22.dp.toPx())
                     )
-                )
-                .padding(16.dp)
+                    drawCircle(
+                        color = ColorOrange.copy(alpha = 0.045f),
+                        radius = 78.dp.toPx(),
+                        center = Offset(size.width * 0.92f, 0f)
+                    )
+                }
         ) {
-            Text(label.uppercase(), fontSize = 10.sp, color = ColorText3, fontWeight = FontWeight.Bold)
-            Spacer(modifier = Modifier.height(8.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                if (icon != null) {
-                    Icon(
-                        imageVector = icon,
-                        contentDescription = null,
-                        tint = ColorText1,
-                        modifier = Modifier.size(18.dp)
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
+            Column(modifier = Modifier.padding(16.dp)) {
+                Text(label.uppercase(), fontSize = 10.sp, color = ColorText3, fontWeight = FontWeight.Bold)
+                Spacer(modifier = Modifier.height(8.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (icon != null) {
+                        Icon(
+                            imageVector = icon,
+                            contentDescription = null,
+                            tint = ColorText1,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                    }
+                    if (label.equals("Total Spent (Month)", ignoreCase = true)) {
+                        AnimatedAmountText(
+                            targetFormatted = value,
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = ColorText1
+                        )
+                    } else {
+                        Text(value, fontSize = 18.sp, fontWeight = FontWeight.Bold, color = ColorText1)
+                    }
                 }
-                if (label.equals("Total Spent (Month)", ignoreCase = true)) {
-                    AnimatedAmountText(
-                        targetFormatted = value,
-                        fontSize = 18.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = ColorText1
-                    )
-                } else {
-                    Text(value, fontSize = 18.sp, fontWeight = FontWeight.Bold, color = ColorText1)
-                }
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(subText, fontSize = 11.sp, color = subTextColor)
             }
-            Spacer(modifier = Modifier.height(6.dp))
-            Text(subText, fontSize = 11.sp, color = subTextColor)
         }
     }
 }
@@ -2201,54 +2627,118 @@ data class CategorySpendingItem(
 )
 
 @Composable
+private fun CategoryDonutChart(
+    items: List<CategorySpendingItem>,
+    totalAmount: Double,
+    progress: Float,
+    modifier: Modifier = Modifier,
+    size: androidx.compose.ui.unit.Dp = 146.dp
+) {
+    Box(
+        modifier = modifier.size(size),
+        contentAlignment = Alignment.Center
+    ) {
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            val strokeW = 20.dp.toPx()
+            var startAngle = -90f
+            items.take(6).forEach { item ->
+                val sweepAngle = (item.percentage / 100f) * 360f * progress
+                if (sweepAngle > 0f) {
+                    drawArc(
+                        color = item.color,
+                        startAngle = startAngle,
+                        sweepAngle = sweepAngle,
+                        useCenter = false,
+                        style = Stroke(width = strokeW, cap = androidx.compose.ui.graphics.StrokeCap.Butt)
+                    )
+                    startAngle += (item.percentage / 100f) * 360f
+                }
+            }
+        }
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text("TOTAL", fontSize = 10.sp, color = ColorText3, fontWeight = FontWeight.Bold)
+            Text(DashboardViewModel.formatIndianCurrencyValue(totalAmount), fontSize = 14.sp, fontWeight = FontWeight.Bold, color = ColorText1)
+        }
+    }
+}
+
+@Composable
+private fun CategoryLegend(
+    items: List<CategorySpendingItem>,
+    compact: Boolean,
+    modifier: Modifier = Modifier
+) {
+    Column(
+        verticalArrangement = Arrangement.spacedBy(if (compact) 9.dp else 12.dp),
+        modifier = modifier
+    ) {
+        items.take(4).forEach { item ->
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(2.dp)
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                    Box(
+                        modifier = Modifier
+                            .size(10.dp)
+                            .clip(RoundedCornerShape(3.dp))
+                            .background(item.color)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Icon(
+                        imageVector = com.autoexpense.app.ui.getCategoryIcon(item.categoryName),
+                        contentDescription = null,
+                        tint = item.color,
+                        modifier = Modifier.size(if (compact) 15.dp else 16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = item.categoryName,
+                        fontSize = if (compact) 12.sp else 13.sp,
+                        color = ColorText1,
+                        fontWeight = FontWeight.Medium,
+                        maxLines = 1,
+                        softWrap = false,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = 40.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "${String.format(java.util.Locale.US, "%.1f", item.percentage)}%",
+                        fontSize = 12.sp,
+                        color = ColorText2,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        softWrap = false
+                    )
+                    Text(
+                        text = DashboardViewModel.formatIndianCurrencyValue(item.amount),
+                        fontSize = if (compact) 12.sp else 13.sp,
+                        color = item.color,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        softWrap = false
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
 fun SpendingByCategoryCard(
     transactions: List<Transaction>,
     periodType: String,
     onPeriodChange: (String) -> Unit
 ) {
-    val confirmed = remember(transactions) { DashboardViewModel.computeConfirmedOutgoing(transactions) }
-    val bounds = remember(periodType) {
-        if (periodType == "weekly") {
-            val mon = DashboardViewModel.getMondayOfWeek()
-            Pair(mon, mon + 7L * 86400000L - 1L)
-        } else {
-            DashboardViewModel.getCurrentMonthBounds()
-        }
-    }
-    val periodTxns = remember(confirmed, bounds) {
-        confirmed.filter { it.timestamp in bounds.first..bounds.second }
-    }
-    val (items, totalAmount) = remember(periodTxns) {
-        if (periodTxns.isEmpty()) {
-            Pair(emptyList<CategorySpendingItem>(), 0.0)
-        } else {
-            val total = periodTxns.sumOf { DashboardViewModel.parseAmount(it.amount) }
-            if (total <= 0.0) {
-                Pair(emptyList<CategorySpendingItem>(), 0.0)
-            } else {
-                val grouped = periodTxns.groupBy { com.autoexpense.app.ui.cleanCategoryName(it.category).ifBlank { "Other" } }
-                val palette = listOf(
-                    ColorOrange, ColorAmber, ColorGreen, Color(0xFF42A5F5),
-                    Color(0xFFAB47BC), Color(0xFF26A69A), Color(0xFFEC407A),
-                    Color(0xFF7E57C2), Color(0xFF8D6E63), Color(0xFF78909C)
-                )
-                val computed = grouped.map { (catName, txList) ->
-                    val catSum = txList.sumOf { DashboardViewModel.parseAmount(it.amount) }
-                    val pct = if (total > 0) ((catSum / total) * 100).toFloat() else 0f
-                    Triple(catName, catSum, pct)
-                }.filter { it.second > 0.0 }.sortedByDescending { it.second }
-
-                val finalItems = computed.mapIndexed { idx, triple ->
-                    CategorySpendingItem(
-                        categoryName = triple.first,
-                        amount = triple.second,
-                        percentage = triple.third,
-                        color = palette[idx % palette.size]
-                    )
-                }
-                Pair(finalItems, total)
-            }
-        }
+    val (items, totalAmount) = remember(transactions, periodType) {
+        computeCategorySpendingItems(transactions, periodType)
     }
 
     val animProgress = remember { androidx.compose.animation.core.Animatable(0f) }
@@ -2273,25 +2763,29 @@ fun SpendingByCategoryCard(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Column {
-                    Text("SPENDING BY CATEGORY", fontSize = 10.sp, color = ColorText3, fontWeight = FontWeight.Bold)
-                    Spacer(modifier = Modifier.height(4.dp))
-                    val formatInr = "₹" + if (totalAmount == 0.0) "0" else String.format(java.util.Locale.US, "%,.2f", totalAmount)
-                    Text(formatInr, fontSize = 18.sp, fontWeight = FontWeight.Bold, color = ColorText1)
-                }
+                Text(
+                    "Spending by Category",
+                    fontSize = 18.sp,
+                    color = ColorText1,
+                    fontWeight = FontWeight.ExtraBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f)
+                )
+                Spacer(modifier = Modifier.width(10.dp))
                 Row(
                     modifier = Modifier
-                        .background(ColorBg3, RoundedCornerShape(8.dp))
+                        .background(ColorBg3, RoundedCornerShape(18.dp))
                         .padding(2.dp)
                 ) {
                     val weeklyBg = if (periodType == "weekly") ColorOrange else Color.Transparent
                     val weeklyText = if (periodType == "weekly") Color.White else ColorText2
                     Box(
                         modifier = Modifier
-                            .clip(RoundedCornerShape(6.dp))
+                            .clip(RoundedCornerShape(16.dp))
                             .background(weeklyBg)
                             .clickable { onPeriodChange("weekly") }
-                            .padding(horizontal = 10.dp, vertical = 5.dp)
+                            .padding(horizontal = 14.dp, vertical = 7.dp)
                     ) {
                         Text("Weekly", fontSize = 11.sp, color = weeklyText, fontWeight = FontWeight.Bold)
                     }
@@ -2299,17 +2793,17 @@ fun SpendingByCategoryCard(
                     val monthlyText = if (periodType == "monthly") Color.White else ColorText2
                     Box(
                         modifier = Modifier
-                            .clip(RoundedCornerShape(6.dp))
+                            .clip(RoundedCornerShape(16.dp))
                             .background(monthlyBg)
                             .clickable { onPeriodChange("monthly") }
-                            .padding(horizontal = 10.dp, vertical = 5.dp)
+                            .padding(horizontal = 14.dp, vertical = 7.dp)
                     ) {
                         Text("Monthly", fontSize = 11.sp, color = monthlyText, fontWeight = FontWeight.Bold)
                     }
                 }
             }
 
-            Spacer(modifier = Modifier.height(20.dp))
+            Spacer(modifier = Modifier.height(14.dp))
 
             if (items.isEmpty()) {
                 Box(
@@ -2321,83 +2815,38 @@ fun SpendingByCategoryCard(
                     Text("No confirmed spending in this period", color = ColorText2, fontSize = 13.sp)
                 }
             } else {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(180.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Canvas(modifier = Modifier.size(160.dp)) {
-                        val strokeW = 22.dp.toPx()
-                        var startAngle = -90f
-                        items.forEach { item ->
-                            val sweepAngle = (item.percentage / 100f) * 360f * animProgress.value
-                            if (sweepAngle > 0f) {
-                                drawArc(
-                                    color = item.color,
-                                    startAngle = startAngle,
-                                    sweepAngle = sweepAngle,
-                                    useCenter = false,
-                                    style = Stroke(width = strokeW, cap = androidx.compose.ui.graphics.StrokeCap.Butt)
-                                )
-                                startAngle += (item.percentage / 100f) * 360f
-                            }
-                        }
-                    }
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text("TOTAL", fontSize = 10.sp, color = ColorText3, fontWeight = FontWeight.Bold)
-                        val formatInr = "₹" + if (totalAmount == 0.0) "0" else String.format(java.util.Locale.US, "%,.2f", totalAmount)
-                        Text(formatInr, fontSize = 15.sp, fontWeight = FontWeight.Bold, color = ColorText1)
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    items.forEach { item ->
-                        Row(
+                BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+                    val compact = maxWidth < 330.dp
+                    if (compact) {
+                        Column(
                             modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
+                            horizontalAlignment = Alignment.CenterHorizontally
                         ) {
-                            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(10.dp)
-                                        .clip(RoundedCornerShape(3.dp))
-                                        .background(item.color)
-                                )
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Icon(
-                                    imageVector = com.autoexpense.app.ui.getCategoryIcon(item.categoryName),
-                                    contentDescription = null,
-                                    tint = ColorText1,
-                                    modifier = Modifier.size(16.dp)
-                                )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text(
-                                    text = item.categoryName,
-                                    fontSize = 13.sp,
-                                    color = ColorText1,
-                                    fontWeight = FontWeight.Medium
-                                )
-                            }
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(
-                                    text = "${String.format(java.util.Locale.US, "%.1f", item.percentage)}%",
-                                    fontSize = 12.sp,
-                                    color = ColorText2,
-                                    fontWeight = FontWeight.Bold
-                                )
-                                Spacer(modifier = Modifier.width(12.dp))
-                                val amtFormatted = "₹" + if (item.amount == 0.0) "0" else String.format(java.util.Locale.US, "%,.2f", item.amount)
-                                Text(
-                                    text = amtFormatted,
-                                    fontSize = 13.sp,
-                                    color = ColorText1,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
+                            CategoryDonutChart(
+                                items = items,
+                                totalAmount = totalAmount,
+                                progress = animProgress.value,
+                                size = 136.dp
+                            )
+                            Spacer(modifier = Modifier.height(12.dp))
+                            CategoryLegend(items = items, compact = true, modifier = Modifier.fillMaxWidth())
+                        }
+                    } else {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = 138.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            CategoryDonutChart(
+                                items = items,
+                                totalAmount = totalAmount,
+                                progress = animProgress.value,
+                                modifier = Modifier.weight(0.40f),
+                                size = 128.dp
+                            )
+                            CategoryLegend(items = items, compact = false, modifier = Modifier.weight(0.60f))
                         }
                     }
                 }
@@ -3150,112 +3599,43 @@ fun ReceiptsLedgerScreen(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Column {
-                Text("Receipts Ledger", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = ColorText1)
+                Text("Transactions", fontSize = 30.sp, fontWeight = FontWeight.Bold, color = ColorText1)
                 Text(
-                    "Search, filter, and review confirmed transactions.",
-                    fontSize = 12.sp,
+                    "${confirmedTxns.size} total",
+                    fontSize = 16.sp,
                     color = ColorText2,
                     modifier = Modifier.padding(bottom = 12.dp)
                 )
             }
 
-            OutlinedButton(
-                onClick = onNavigateToExport,
-                border = BorderStroke(1.dp, ColorBg3),
-                colors = ButtonDefaults.outlinedButtonColors(contentColor = ColorText2),
-                shape = RoundedCornerShape(10.dp),
-                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
-            ) {
-                Icon(Icons.Default.Download, contentDescription = null, tint = ColorText2, modifier = Modifier.size(16.dp))
-                Spacer(modifier = Modifier.width(6.dp))
-                Text("Export", fontSize = 12.sp, color = ColorText2)
-            }
         }
 
         // Search Bar and Filter/Sort Row
-        Row(
+        OutlinedTextField(
+            value = filterSettings.searchQuery,
+            onValueChange = { viewModel.setSearchQuery(it) },
+            placeholder = { Text("Search transactions...", fontSize = 18.sp, color = ColorText3) },
+            trailingIcon = if (filterSettings.searchQuery.isNotEmpty()) {
+                {
+                    IconButton(onClick = { viewModel.setSearchQuery("") }) {
+                        Icon(Icons.Default.Close, contentDescription = "Clear", tint = ColorText3, modifier = Modifier.size(18.dp))
+                    }
+                }
+            } else null,
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedBorderColor = Color.Transparent,
+                unfocusedBorderColor = Color.Transparent,
+                focusedTextColor = ColorText1,
+                unfocusedTextColor = ColorText1,
+                focusedContainerColor = Color.White,
+                unfocusedContainerColor = Color.White
+            ),
+            shape = RoundedCornerShape(16.dp),
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(bottom = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            OutlinedTextField(
-                value = filterSettings.searchQuery,
-                onValueChange = { viewModel.setSearchQuery(it) },
-                placeholder = { Text("Search merchant, amount, category, method...", fontSize = 13.sp, color = ColorText3) },
-                leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = ColorText3, modifier = Modifier.size(18.dp)) },
-                trailingIcon = if (filterSettings.searchQuery.isNotEmpty()) {
-                    {
-                        IconButton(onClick = { viewModel.setSearchQuery("") }) {
-                            Icon(Icons.Default.Close, contentDescription = "Clear", tint = ColorText3, modifier = Modifier.size(16.dp))
-                        }
-                    }
-                } else null,
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = ColorOrange,
-                    unfocusedBorderColor = ColorBg3,
-                    focusedTextColor = ColorText1,
-                    unfocusedTextColor = ColorText1,
-                    focusedContainerColor = ColorBg2,
-                    unfocusedContainerColor = ColorBg2
-                ),
-                shape = RoundedCornerShape(14.dp),
-                modifier = Modifier
-                    .weight(1f)
-                    .height(52.dp)
-            )
-
-            // Filter button
-            Box {
-                OutlinedButton(
-                    onClick = { showFilterSheet = true },
-                    border = BorderStroke(1.dp, if (filterSettings.activeFilterCount() > 0) ColorOrange else ColorBg3),
-                    colors = ButtonDefaults.outlinedButtonColors(
-                        contentColor = if (filterSettings.activeFilterCount() > 0) ColorOrange else ColorText2
-                    ),
-                    shape = RoundedCornerShape(14.dp),
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 12.dp),
-                    modifier = Modifier.height(52.dp)
-                ) {
-                    Icon(Icons.Default.FilterList, contentDescription = "Filter", modifier = Modifier.size(18.dp))
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text("Filter", fontSize = 13.sp)
-                }
-                if (filterSettings.activeFilterCount() > 0) {
-                    Box(
-                        modifier = Modifier
-                            .align(Alignment.TopEnd)
-                            .offset(x = 4.dp, y = (-4).dp)
-                            .size(20.dp)
-                            .background(ColorOrange, CircleShape)
-                            .border(1.dp, ColorBg0, CircleShape),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            filterSettings.activeFilterCount().toString(),
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color.White
-                        )
-                    }
-                }
-            }
-
-            // Sort button
-            OutlinedButton(
-                onClick = { showSortSheet = true },
-                border = BorderStroke(1.dp, ColorBg3),
-                colors = ButtonDefaults.outlinedButtonColors(contentColor = ColorText2),
-                shape = RoundedCornerShape(14.dp),
-                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 12.dp),
-                modifier = Modifier.height(52.dp)
-            ) {
-                Icon(Icons.AutoMirrored.Filled.Sort, contentDescription = "Sort", modifier = Modifier.size(18.dp))
-                Spacer(modifier = Modifier.width(4.dp))
-                Text("Sort", fontSize = 13.sp)
-            }
-        }
+                .height(64.dp)
+                .padding(bottom = 12.dp)
+        )
 
         LazyRow(
             modifier = Modifier
@@ -3263,29 +3643,7 @@ fun ReceiptsLedgerScreen(
                 .padding(bottom = 12.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            item {
-                QuickFilterChip(
-                    label = "All",
-                    selected = !filterSettings.hasActiveSearchOrFilters(),
-                    onClick = { viewModel.clearAll() }
-                )
-            }
-            listOf(
-                PaymentMethod.UPI,
-                PaymentMethod.DEBIT_CARD,
-                PaymentMethod.CREDIT_CARD,
-                PaymentMethod.WALLET,
-                PaymentMethod.NET_BANKING
-            ).forEach { method ->
-                item {
-                    QuickFilterChip(
-                        label = method.label,
-                        selected = filterSettings.paymentMethodFilter == method.name,
-                        onClick = { viewModel.setPaymentMethodFilter(method.name) }
-                    )
-                }
-            }
-            listOf("Bills", "Subscriptions", "Shopping", "Food", "Travel", "Entertainment").forEach { label ->
+            listOf("Food & Dining", "Transportation", "Shopping", "Entertainment", "Bills & Utilities").forEach { label ->
                 item {
                     QuickFilterChip(
                         label = label,
@@ -3437,31 +3795,12 @@ fun ReceiptsLedgerScreen(
                 contentAlignment = Alignment.Center
             ) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Icon(
-                        if (filterSettings.hasActiveSearchOrFilters()) Icons.Default.Search else Icons.Default.Receipt,
-                        contentDescription = null,
-                        modifier = Modifier.size(48.dp),
-                        tint = ColorText3
-                    )
-                    Spacer(modifier = Modifier.height(12.dp))
                     Text(
-                        if (filterSettings.hasActiveSearchOrFilters()) "No matching transactions found" else "No confirmed transactions yet",
+                        "No transactions found",
                         color = ColorText2,
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.SemiBold
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Normal
                     )
-                    if (filterSettings.hasActiveSearchOrFilters()) {
-                        Spacer(modifier = Modifier.height(6.dp))
-                        Text("Try adjusting your search query or clearing filters.", color = ColorText3, fontSize = 12.sp)
-                        Spacer(modifier = Modifier.height(16.dp))
-                        OutlinedButton(
-                            onClick = { viewModel.clearAll() },
-                            colors = ButtonDefaults.outlinedButtonColors(contentColor = ColorOrange),
-                            border = BorderStroke(1.dp, ColorOrange)
-                        ) {
-                            Text("Clear Search & Filters", fontSize = 12.sp)
-                        }
-                    }
                 }
             }
         } else {
@@ -3725,10 +4064,10 @@ fun NeedsReviewScreen(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Column {
-                    Text("Needs Review", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = ColorText1)
+                    Text("Review", fontSize = 30.sp, fontWeight = FontWeight.Bold, color = ColorText1)
                     Text(
-                        "${reviewTxns.size} transactions need attention",
-                        fontSize = 12.sp,
+                        "Verify and categorize transactions",
+                        fontSize = 16.sp,
                         color = ColorText2
                     )
                 }
@@ -3764,13 +4103,15 @@ fun NeedsReviewScreen(
                     contentAlignment = Alignment.Center
                 ) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Icon(Icons.Default.DoneAll, contentDescription = null, modifier = Modifier.size(56.dp), tint = ColorGreen)
-                        Spacer(modifier = Modifier.height(12.dp))
-                        Text("All transactions caught up!", color = ColorText1, fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                        Spacer(modifier = Modifier.height(8.dp))
-                        TextButton(onClick = onBackToDashboard) {
-                            Text("← Back to Dashboard", color = ColorOrange)
-                        }
+                        Text("All Caught Up!", color = ColorText1, fontWeight = FontWeight.Bold, fontSize = 24.sp)
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Text(
+                            "All your transactions are properly\ncategorized. New transactions will appear\nhere for review.",
+                            color = ColorText2,
+                            fontSize = 18.sp,
+                            lineHeight = 28.sp,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                        )
                     }
                 }
             } else {
@@ -4562,7 +4903,7 @@ fun ProfileScreen(
                 "Profile",
                 fontWeight = FontWeight.Bold,
                 color = ColorText1,
-                fontSize = 18.sp,
+                fontSize = 24.sp,
                 modifier = Modifier.weight(1f)
             )
             IconButton(
