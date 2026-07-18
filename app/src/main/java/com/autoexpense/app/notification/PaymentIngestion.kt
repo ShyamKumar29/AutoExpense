@@ -5,7 +5,10 @@ import android.util.Log
 import com.autoexpense.app.BuildConfig
 import com.autoexpense.app.TransactionRepository
 import com.autoexpense.app.data.BillRepository
+import com.autoexpense.app.data.RecurringPaymentRepository
 import com.autoexpense.app.data.TransactionEntity
+import com.autoexpense.app.data.UserPreferencesRepository
+import kotlinx.coroutines.flow.first
 
 /**
  * Shared payment insertion path for notification and direct-SMS detection.
@@ -36,12 +39,25 @@ object PaymentIngestion {
 
         return try {
             TransactionRepository.addTransactionEntity(toTransactionEntity(payment))
-            BillRepository.markMatchingPaymentPaid(
-                transactionId = payment.id,
-                merchantOrRecipient = payment.merchantOrRecipient,
-                amount = payment.amount,
-                paidAt = payment.timestamp
-            )
+            val autoMatchingEnabled = context?.let {
+                UserPreferencesRepository.getInstance(it).isSmartAutoMatchingEnabled.first()
+            } ?: true
+            val autoMarkPaidEnabled = context?.let {
+                UserPreferencesRepository.getInstance(it).isSmartAutoMarkPaidEnabled.first()
+            } ?: true
+            if (autoMatchingEnabled && autoMarkPaidEnabled) {
+                BillRepository.markMatchingPaymentPaid(
+                    transactionId = payment.id,
+                    merchantOrRecipient = payment.merchantOrRecipient,
+                    amount = payment.amount,
+                    paidAt = payment.timestamp
+                )
+                RecurringPaymentRepository.markMatchingPaymentPaid(
+                    merchantOrRecipient = payment.merchantOrRecipient,
+                    amount = payment.amount,
+                    paidAt = payment.timestamp
+                )
+            }
             if (context != null) {
                 NotificationHealthRepository.recordPaymentDetected(context, payment.timestamp)
             }

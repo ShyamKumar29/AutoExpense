@@ -95,6 +95,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -113,12 +114,14 @@ import com.autoexpense.app.ColorText1
 import com.autoexpense.app.ColorText2
 import com.autoexpense.app.ColorText3
 import com.autoexpense.app.DashboardViewModel
+import com.autoexpense.app.Transaction
 import com.autoexpense.app.TransactionRepository
 import com.autoexpense.app.data.BillEntity
 import com.autoexpense.app.data.BillRepository
 import com.autoexpense.app.data.PaymentMethod
 import com.autoexpense.app.data.RecurringPaymentEntity
 import com.autoexpense.app.data.RecurringPaymentRepository
+import com.autoexpense.app.data.UserPreferencesRepository
 import com.autoexpense.app.notification.RecurringPaymentDetector
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -262,6 +265,17 @@ private data class CalendarPaymentItem(
     val icon: androidx.compose.ui.graphics.vector.ImageVector
 )
 
+private data class SmartPaymentSuggestion(
+    val id: String,
+    val merchant: String,
+    val amount: Double,
+    val frequency: String,
+    val occurrenceCount: Int,
+    val nextDueAt: Long,
+    val type: String,
+    val lastPaymentAt: Long
+)
+
 class PaymentMethodStatsViewModel : ViewModel() {
     val breakdown: StateFlow<List<PaymentMethodBreakdownItem>> = TransactionRepository.transactions.map { txns ->
         DashboardViewModel.computeConfirmedOutgoing(txns)
@@ -387,7 +401,7 @@ fun UpcomingDashboardCard(onViewAll: () -> Unit) {
                     icon = "↻"
                 )
             }
-        (billItems + recurringItems).sortedBy { it.timestamp ?: Long.MAX_VALUE }.take(4)
+        (billItems + recurringItems).sortedBy { it.timestamp ?: Long.MAX_VALUE }.take(3)
     }
 
     Card(
@@ -399,11 +413,11 @@ fun UpcomingDashboardCard(onViewAll: () -> Unit) {
         Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Column {
-                    Text("Upcoming", color = ColorText1, fontSize = 18.sp, fontWeight = FontWeight.ExtraBold)
+                    Text("Upcoming Payments", color = ColorText1, fontSize = 18.sp, fontWeight = FontWeight.ExtraBold)
                     Text("Bills and subscriptions due soon", color = ColorText3, fontSize = 12.sp)
                 }
                 TextButton(onClick = onViewAll) {
-                    Text("View All →", color = ColorOrange, fontWeight = FontWeight.Bold)
+                    Text("View All", color = ColorOrange, fontWeight = FontWeight.Bold)
                 }
             }
             if (upcoming.isEmpty()) {
@@ -439,11 +453,28 @@ fun PaymentsScreen(
     var editingSubscription by remember { mutableStateOf<RecurringPaymentEntity?>(null) }
     var showBillSheet by remember { mutableStateOf(false) }
     var showSubscriptionSheet by remember { mutableStateOf(false) }
+    val context = LocalContext.current
     val bills by billsViewModel.bills.collectAsState()
     val recurring by recurringViewModel.recurringPayments.collectAsState()
+    val transactions by recurringViewModel.transactions.collectAsState()
+    val userPrefs = remember(context) { UserPreferencesRepository.getInstance(context) }
+    val smartDetectionEnabled by userPrefs.isSmartPaymentDetectionEnabled.collectAsState(initial = true)
+    val smartSuggestionsEnabled by userPrefs.isSmartSuggestionsEnabled.collectAsState(initial = true)
     val tabs = listOf("bills" to "Bills", "subscriptions" to "Subscriptions")
     val visibleBills = if (selectedTab == "bills") bills else emptyList()
     val visibleSubscriptions = if (selectedTab == "subscriptions") recurring else emptyList()
+    val smartPrefs = remember(context) { context.getSharedPreferences("smart_payments", android.content.Context.MODE_PRIVATE) }
+    var ignoredSuggestionIds by remember {
+        mutableStateOf(smartPrefs.getStringSet("ignored_suggestions", emptySet()).orEmpty())
+    }
+    val suggestions = remember(transactions, bills, recurring, ignoredSuggestionIds, selectedTab, smartDetectionEnabled, smartSuggestionsEnabled) {
+        if (!smartDetectionEnabled || !smartSuggestionsEnabled) {
+            emptyList()
+        } else {
+            detectSmartPaymentSuggestions(transactions, bills, recurring, ignoredSuggestionIds)
+                .filter { if (selectedTab == "bills") it.type == "BILL" else it.type == "SUBSCRIPTION" }
+        }
+    }
 
     if (showBillSheet) {
         AddBillSheet(
@@ -526,15 +557,38 @@ fun PaymentsScreen(
                 }
             }
             PaymentsSummaryCard(bills = visibleBills, recurring = visibleSubscriptions)
+            ExpectedFixedExpensesCard(
+                bills = visibleBills,
+                recurring = visibleSubscriptions,
+                selectedTab = selectedTab
+            )
             SmartUpcomingCalendar(
                 bills = visibleBills,
                 recurring = visibleSubscriptions,
                 onMarkBillPaid = { billsViewModel.markPaid(it) },
                 onMarkSubscriptionPaid = { recurringViewModel.updateStatus(it, "PAID") }
             )
+            SmartSuggestionsSection(
+                suggestions = suggestions,
+                onTrack = { suggestion ->
+                    if (suggestion.type == "BILL") {
+                        editingBill = suggestion.toBillEntity()
+                        showBillSheet = true
+                    } else {
+                        editingSubscription = suggestion.toRecurringPaymentEntity()
+                        showSubscriptionSheet = true
+                    }
+                },
+                onIgnore = { suggestion ->
+                    val updated = ignoredSuggestionIds + suggestion.id
+                    ignoredSuggestionIds = updated
+                    smartPrefs.edit().putStringSet("ignored_suggestions", updated).apply()
+                }
+            )
             if (selectedTab == "bills") {
                 BillsContent(
                     viewModel = billsViewModel,
+                    transactions = transactions,
                     onAdd = {
                         editingBill = null
                         showBillSheet = true
@@ -548,6 +602,7 @@ fun PaymentsScreen(
             } else {
                 SubscriptionsContent(
                     viewModel = recurringViewModel,
+                    transactions = transactions,
                     onAdd = {
                         editingSubscription = null
                         showSubscriptionSheet = true
@@ -864,6 +919,95 @@ private fun PaymentStatusGuideRow(
     }
 }
 
+@Composable
+private fun ExpectedFixedExpensesCard(
+    bills: List<BillEntity>,
+    recurring: List<RecurringPaymentEntity>,
+    selectedTab: String
+) {
+    val activeBills = bills.filter { it.status != "DISMISSED" && it.status != "PAID" }
+    val activeSubscriptions = recurring.filter { it.status != "DISMISSED" && it.status != "PAUSED" }
+    val items = remember(activeBills, activeSubscriptions) {
+        (activeBills.map { it.provider to it.amount } + activeSubscriptions.map { it.merchant to it.amount })
+            .sortedByDescending { it.second }
+    }
+
+    FinanceCard {
+        Text("Expected Fixed Expenses", color = ColorText1, fontSize = 18.sp, fontWeight = FontWeight.ExtraBold)
+        Spacer(modifier = Modifier.height(8.dp))
+        Text(DashboardViewModel.formatIndianCurrencyValue(items.sumOf { it.second }), color = ColorText1, fontSize = 28.sp, fontWeight = FontWeight.ExtraBold)
+        Spacer(modifier = Modifier.height(12.dp))
+        if (items.isEmpty()) {
+            Text(
+                text = if (selectedTab == "bills") "No active bills." else "No active subscriptions.",
+                color = ColorText2,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Medium
+            )
+        } else {
+            items.take(5).forEach { (name, amount) ->
+                FinanceMetricRow(name, "Active recurring payment", DashboardViewModel.formatIndianCurrencyValue(amount))
+            }
+        }
+    }
+}
+
+@Composable
+private fun SmartSuggestionsSection(
+    suggestions: List<SmartPaymentSuggestion>,
+    onTrack: (SmartPaymentSuggestion) -> Unit,
+    onIgnore: (SmartPaymentSuggestion) -> Unit
+) {
+    if (suggestions.isEmpty()) return
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text("Suggested Recurring Payments", color = ColorText1, fontSize = 18.sp, fontWeight = FontWeight.ExtraBold)
+        suggestions.forEach { suggestion ->
+            FinanceCard {
+                Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier
+                            .size(42.dp)
+                            .clip(CircleShape)
+                            .background(ColorOrange.copy(alpha = 0.14f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = if (suggestion.type == "BILL") billCategoryIcon(suggestion.merchant) else Icons.Outlined.Subscriptions,
+                            contentDescription = null,
+                            tint = ColorOrange,
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(suggestion.merchant, color = ColorText1, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                        Text("Detected ${suggestion.frequency.lowercase().replaceFirstChar { it.titlecase(Locale.US) }}", color = ColorText2, fontSize = 12.sp)
+                        Text("Found ${suggestion.occurrenceCount} matching payments", color = ColorText3, fontSize = 11.sp)
+                    }
+                    Text(DashboardViewModel.formatIndianCurrencyValue(suggestion.amount), color = ColorText1, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                }
+                Spacer(modifier = Modifier.height(12.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        onClick = { onTrack(suggestion) },
+                        colors = ButtonDefaults.buttonColors(containerColor = ColorOrange),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Text("Track as ${if (suggestion.type == "BILL") "Bill" else "Subscription"}", color = androidx.compose.ui.graphics.Color.White, fontSize = 12.sp)
+                    }
+                    OutlinedButton(
+                        onClick = { onIgnore(suggestion) },
+                        border = BorderStroke(1.dp, ColorBg3),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Text("Ignore", color = ColorText2, fontSize = 12.sp)
+                    }
+                }
+            }
+        }
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun AddBillSheet(
@@ -1039,6 +1183,7 @@ private fun PaymentEmptyPlaceholder(
 @Composable
 private fun PaymentBillCard(
     bill: BillEntity,
+    history: List<Transaction>,
     onMarkPaid: () -> Unit,
     onDismiss: () -> Unit,
     onEdit: () -> Unit,
@@ -1080,12 +1225,14 @@ private fun PaymentBillCard(
                 ) { Text("Dismiss", color = ColorText2, fontSize = 12.sp) }
             }
         }
+        PaymentHistoryBlock(history)
     }
 }
 
 @Composable
 private fun SubscriptionPaymentCard(
     item: RecurringPaymentEntity,
+    history: List<Transaction>,
     onMarkPaid: () -> Unit,
     onTogglePause: () -> Unit,
     onDismiss: () -> Unit,
@@ -1132,6 +1279,22 @@ private fun SubscriptionPaymentCard(
                 shape = RoundedCornerShape(10.dp)
             ) { Text("Dismiss", color = ColorText2, fontSize = 12.sp) }
         }
+        PaymentHistoryBlock(history)
+    }
+}
+
+@Composable
+private fun PaymentHistoryBlock(history: List<Transaction>) {
+    if (history.isEmpty()) return
+    Spacer(modifier = Modifier.height(12.dp))
+    Text("Previous Payments", color = ColorText2, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+    Spacer(modifier = Modifier.height(6.dp))
+    history.take(3).forEach { txn ->
+        FinanceMetricRow(
+            title = formatDate(txn.timestamp),
+            sub = if (txn.detectionReason.isNotBlank() || txn.notificationExcerpt.isNotBlank()) "Matched Automatically" else "Manual",
+            amount = DashboardViewModel.formatIndianCurrencyValue(DashboardViewModel.parseAmount(txn.amount))
+        )
     }
 }
 
@@ -1320,6 +1483,7 @@ fun BillsScreen(viewModel: BillsViewModel = androidx.lifecycle.viewmodel.compose
 @Composable
 private fun BillsContent(
     viewModel: BillsViewModel,
+    transactions: List<Transaction> = emptyList(),
     onAdd: () -> Unit = {},
     onEdit: (BillEntity) -> Unit = {},
     onDelete: (BillEntity) -> Unit = {}
@@ -1349,6 +1513,7 @@ private fun BillsContent(
                     items.forEach { bill ->
                         PaymentBillCard(
                             bill = bill,
+                            history = matchedPaymentHistory(bill.provider, bill.amount, transactions),
                             onMarkPaid = { viewModel.markPaid(bill.id) },
                             onDismiss = { viewModel.dismiss(bill.id) },
                             onEdit = { onEdit(bill) },
@@ -1374,6 +1539,7 @@ fun RecurringPaymentsScreen(viewModel: RecurringPaymentsViewModel = androidx.lif
 @Composable
 private fun SubscriptionsContent(
     viewModel: RecurringPaymentsViewModel,
+    transactions: List<Transaction> = emptyList(),
     onAdd: () -> Unit = {},
     onEdit: (RecurringPaymentEntity) -> Unit = {},
     onDelete: (RecurringPaymentEntity) -> Unit = {}
@@ -1402,6 +1568,7 @@ private fun SubscriptionsContent(
                     section.forEach { item ->
                         SubscriptionPaymentCard(
                             item = item,
+                            history = matchedPaymentHistory(item.merchant, item.amount, transactions),
                             onMarkPaid = { viewModel.updateStatus(item.id, "PAID") },
                             onTogglePause = { viewModel.updateStatus(item.id, if (item.status == "PAUSED") "ACTIVE" else "PAUSED") },
                             onDismiss = { viewModel.updateStatus(item.id, "DISMISSED") },
@@ -1608,6 +1775,127 @@ private fun paymentStatusText(status: String): String = when (status) {
     "DISMISSED" -> "Dismissed"
     else -> status.replace('_', ' ')
 }
+
+private fun detectSmartPaymentSuggestions(
+    transactions: List<Transaction>,
+    bills: List<BillEntity>,
+    recurring: List<RecurringPaymentEntity>,
+    ignoredIds: Set<String>,
+    nowMs: Long = System.currentTimeMillis()
+): List<SmartPaymentSuggestion> {
+    val trackedMerchants = (bills.map { it.provider } + recurring.map { it.merchant })
+        .map { normalizeSmartMerchant(it) }
+        .filter { it.isNotBlank() }
+        .toSet()
+    val confirmed = DashboardViewModel.computeConfirmedOutgoing(transactions)
+        .filter { it.timestamp > 0L && DashboardViewModel.parseAmount(it.amount) > 0.0 }
+
+    return confirmed
+        .groupBy { normalizeSmartMerchant(it.merchant) }
+        .mapNotNull { (key, txns) ->
+            if (key.isBlank() || key in trackedMerchants || key in ignoredIds || txns.size < 3) return@mapNotNull null
+            val sorted = txns.sortedBy { it.timestamp }
+            val intervals = sorted.zipWithNext { a, b -> ((b.timestamp - a.timestamp) / DAY_MS).toInt() }
+                .filter { it > 0 }
+            if (intervals.size < 2) return@mapNotNull null
+            val medianInterval = intervals.sorted()[intervals.size / 2]
+            val frequency = when {
+                medianInterval in 6..8 -> "WEEKLY"
+                medianInterval in 27..33 -> "MONTHLY"
+                medianInterval in 350..380 -> "YEARLY"
+                else -> return@mapNotNull null
+            }
+            val stableIntervals = intervals.count { kotlin.math.abs(it - medianInterval) <= 4 }
+            if (stableIntervals < 2) return@mapNotNull null
+            val amounts = sorted.map { DashboardViewModel.parseAmount(it.amount) }
+            val averageAmount = amounts.average()
+            val amountTolerance = maxOf(25.0, averageAmount * 0.18)
+            if (amounts.count { kotlin.math.abs(it - averageAmount) <= amountTolerance } < 3) return@mapNotNull null
+            val latest = sorted.last()
+            val type = classifySmartPayment(latest.merchant, latest.category, averageAmount)
+            val suggestionId = key
+            SmartPaymentSuggestion(
+                id = suggestionId,
+                merchant = latest.merchant,
+                amount = averageAmount,
+                frequency = frequency,
+                occurrenceCount = sorted.size,
+                nextDueAt = latest.timestamp + medianInterval * DAY_MS,
+                type = type,
+                lastPaymentAt = latest.timestamp
+            )
+        }
+        .filter { it.nextDueAt >= nowMs - 45L * DAY_MS }
+        .sortedBy { it.nextDueAt }
+}
+
+private fun classifySmartPayment(merchant: String, category: String, amount: Double): String {
+    val haystack = "$merchant $category".lowercase(Locale.US)
+    val billKeywords = listOf("electric", "water", "wifi", "internet", "rent", "insurance", "credit", "mobile", "recharge", "gas", "fuel", "jio", "airtel", "bsnl", "utility")
+    val subscriptionKeywords = listOf("netflix", "spotify", "youtube", "google", "apple", "prime", "hotstar", "disney", "subscription", "one")
+    return when {
+        billKeywords.any { it in haystack } -> "BILL"
+        subscriptionKeywords.any { it in haystack } -> "SUBSCRIPTION"
+        amount >= 1000.0 -> "BILL"
+        else -> "SUBSCRIPTION"
+    }
+}
+
+private fun SmartPaymentSuggestion.toBillEntity(): BillEntity {
+    val now = System.currentTimeMillis()
+    return BillEntity(
+        id = "suggested_bill_${UUID.nameUUIDFromBytes(id.toByteArray())}",
+        billType = normalizeManualKey(merchant),
+        provider = merchant,
+        amount = amount,
+        dueDate = nextDueAt,
+        status = deriveBillStatus(nextDueAt),
+        generatedAt = now,
+        source = "SUGGESTED",
+        safeExcerpt = "${frequency.lowercase().replaceFirstChar { it.titlecase(Locale.US) }} • Reminder: None • Auto Pay: Off",
+        billFingerprint = "suggested_bill_$id",
+        createdAt = now,
+        updatedAt = now
+    )
+}
+
+private fun SmartPaymentSuggestion.toRecurringPaymentEntity(): RecurringPaymentEntity {
+    val now = System.currentTimeMillis()
+    return RecurringPaymentEntity(
+        id = "suggested_subscription_${UUID.nameUUIDFromBytes(id.toByteArray())}",
+        merchant = merchant,
+        normalizedMerchant = normalizeSmartMerchant(merchant),
+        amount = amount,
+        frequency = frequency,
+        lastPaymentAt = lastPaymentAt,
+        nextExpectedAt = nextDueAt,
+        status = "ACTIVE",
+        confidence = 0.9f,
+        createdAt = now,
+        updatedAt = now
+    )
+}
+
+private fun matchedPaymentHistory(
+    merchant: String,
+    amount: Double,
+    transactions: List<Transaction>
+): List<Transaction> {
+    val normalizedMerchant = normalizeSmartMerchant(merchant)
+    if (normalizedMerchant.isBlank()) return emptyList()
+    val tolerance = maxOf(25.0, amount * 0.18)
+    return DashboardViewModel.computeConfirmedOutgoing(transactions)
+        .filter { txn ->
+            val txnMerchant = normalizeSmartMerchant(txn.merchant)
+            val merchantMatch = txnMerchant.contains(normalizedMerchant) || normalizedMerchant.contains(txnMerchant)
+            val amountMatch = kotlin.math.abs(DashboardViewModel.parseAmount(txn.amount) - amount) <= tolerance
+            merchantMatch && amountMatch
+        }
+        .sortedByDescending { it.timestamp }
+}
+
+private fun normalizeSmartMerchant(value: String): String =
+    value.lowercase(Locale.US).replace(Regex("""[^a-z0-9]+"""), "")
 
 private fun subscriptionStatusText(item: RecurringPaymentEntity): String = when {
     item.status == "PAID" -> "Paid"

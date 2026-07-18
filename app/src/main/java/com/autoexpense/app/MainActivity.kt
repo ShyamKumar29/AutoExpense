@@ -960,6 +960,7 @@ fun MainAppContainer(
     val isHapticEnabled by userPrefs.isHapticFeedbackEnabled.collectAsState(initial = true)
     val budgetWarningThreshold by userPrefs.budgetWarningThreshold.collectAsState(initial = 0.7f)
     val userName by userPrefs.userName.collectAsState(initial = "")
+    val smartDashboardWidgetEnabled by userPrefs.isSmartDashboardWidgetEnabled.collectAsState(initial = true)
     val scope = rememberCoroutineScope()
 
     LaunchedEffect(isHapticEnabled) {
@@ -1035,6 +1036,7 @@ fun MainAppContainer(
                             userName = userName,
                             onProfileClick = { activeScreen = "profile" },
                             showNotificationSetupCard = showNotificationSetupCard,
+                            showUpcomingPaymentsWidget = smartDashboardWidgetEnabled,
                             onEnableAccess = {
                                 settingsReturnScreen = "dashboard"
                                 openPaymentSetupFromDashboard = true
@@ -1203,6 +1205,7 @@ fun DashboardScreen(
     userName: String = "",
     onProfileClick: () -> Unit = {},
     showNotificationSetupCard: Boolean = false,
+    showUpcomingPaymentsWidget: Boolean = true,
     onEnableAccess: () -> Unit = { onNavigate("settings") },
     onDismissSetupCard: () -> Unit = {},
     onNavigateToReceiptsWithFilter: (Long, Long, String) -> Unit = { _, _, _ -> onNavigate("receipts") }
@@ -1255,6 +1258,14 @@ fun DashboardScreen(
             )
 
             Spacer(modifier = Modifier.height(10.dp))
+
+            if (showUpcomingPaymentsWidget) {
+                com.autoexpense.app.finance.UpcomingDashboardCard(
+                    onViewAll = { onNavigate("payments") }
+                )
+
+                Spacer(modifier = Modifier.height(10.dp))
+            }
 
             SpendingByCategoryCard(
                 transactions = transactions,

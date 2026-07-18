@@ -280,7 +280,12 @@ data class PreferencesBackupDto(
     val theme: String,
     val budgetWarningThreshold: Float,
     val isHapticFeedbackEnabled: Boolean,
-    val isPaymentSetupCompleted: Boolean
+    val isPaymentSetupCompleted: Boolean,
+    val isSmartPaymentDetectionEnabled: Boolean = true,
+    val isSmartAutoMatchingEnabled: Boolean = true,
+    val isSmartAutoMarkPaidEnabled: Boolean = true,
+    val isSmartSuggestionsEnabled: Boolean = true,
+    val isSmartDashboardWidgetEnabled: Boolean = true
 ) {
     fun toSnapshot(): PreferencesSnapshot = PreferencesSnapshot(
         userName = userName,
@@ -288,7 +293,12 @@ data class PreferencesBackupDto(
         theme = theme,
         budgetWarningThreshold = budgetWarningThreshold,
         isHapticFeedbackEnabled = isHapticFeedbackEnabled,
-        isPaymentSetupCompleted = isPaymentSetupCompleted
+        isPaymentSetupCompleted = isPaymentSetupCompleted,
+        isSmartPaymentDetectionEnabled = isSmartPaymentDetectionEnabled,
+        isSmartAutoMatchingEnabled = isSmartAutoMatchingEnabled,
+        isSmartAutoMarkPaidEnabled = isSmartAutoMarkPaidEnabled,
+        isSmartSuggestionsEnabled = isSmartSuggestionsEnabled,
+        isSmartDashboardWidgetEnabled = isSmartDashboardWidgetEnabled
     )
 
     companion object {
@@ -298,7 +308,12 @@ data class PreferencesBackupDto(
             theme = snapshot.theme,
             budgetWarningThreshold = snapshot.budgetWarningThreshold,
             isHapticFeedbackEnabled = snapshot.isHapticFeedbackEnabled,
-            isPaymentSetupCompleted = snapshot.isPaymentSetupCompleted
+            isPaymentSetupCompleted = snapshot.isPaymentSetupCompleted,
+            isSmartPaymentDetectionEnabled = snapshot.isSmartPaymentDetectionEnabled,
+            isSmartAutoMatchingEnabled = snapshot.isSmartAutoMatchingEnabled,
+            isSmartAutoMarkPaidEnabled = snapshot.isSmartAutoMarkPaidEnabled,
+            isSmartSuggestionsEnabled = snapshot.isSmartSuggestionsEnabled,
+            isSmartDashboardWidgetEnabled = snapshot.isSmartDashboardWidgetEnabled
         )
     }
 }

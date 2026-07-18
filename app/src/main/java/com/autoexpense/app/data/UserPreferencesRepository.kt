@@ -19,7 +19,12 @@ data class PreferencesSnapshot(
     val theme: String = "system",
     val budgetWarningThreshold: Float = 0.7f,
     val isHapticFeedbackEnabled: Boolean = true,
-    val isPaymentSetupCompleted: Boolean = false
+    val isPaymentSetupCompleted: Boolean = false,
+    val isSmartPaymentDetectionEnabled: Boolean = true,
+    val isSmartAutoMatchingEnabled: Boolean = true,
+    val isSmartAutoMarkPaidEnabled: Boolean = true,
+    val isSmartSuggestionsEnabled: Boolean = true,
+    val isSmartDashboardWidgetEnabled: Boolean = true
 )
 
 val Context.userDataStore: DataStore<Preferences> by preferencesDataStore(name = "user_prefs")
@@ -33,6 +38,11 @@ class UserPreferencesRepository(private val context: Context) {
         private val HAPTIC_FEEDBACK_KEY = booleanPreferencesKey("haptic_feedback")
         private val PAYMENT_SETUP_COMPLETED_KEY = booleanPreferencesKey("payment_setup_completed")
         private val LAST_BACKUP_TIMESTAMP_KEY = longPreferencesKey("last_backup_timestamp")
+        private val SMART_PAYMENT_DETECTION_KEY = booleanPreferencesKey("smart_payment_detection")
+        private val SMART_AUTO_MATCHING_KEY = booleanPreferencesKey("smart_auto_matching")
+        private val SMART_AUTO_MARK_PAID_KEY = booleanPreferencesKey("smart_auto_mark_paid")
+        private val SMART_SUGGESTIONS_KEY = booleanPreferencesKey("smart_suggestions")
+        private val SMART_DASHBOARD_WIDGET_KEY = booleanPreferencesKey("smart_dashboard_widget")
 
         @Volatile
         private var INSTANCE: UserPreferencesRepository? = null
@@ -74,6 +84,26 @@ class UserPreferencesRepository(private val context: Context) {
         preferences[LAST_BACKUP_TIMESTAMP_KEY] ?: 0L
     }
 
+    val isSmartPaymentDetectionEnabled: Flow<Boolean> = context.userDataStore.data.map { preferences ->
+        preferences[SMART_PAYMENT_DETECTION_KEY] ?: true
+    }
+
+    val isSmartAutoMatchingEnabled: Flow<Boolean> = context.userDataStore.data.map { preferences ->
+        preferences[SMART_AUTO_MATCHING_KEY] ?: true
+    }
+
+    val isSmartAutoMarkPaidEnabled: Flow<Boolean> = context.userDataStore.data.map { preferences ->
+        preferences[SMART_AUTO_MARK_PAID_KEY] ?: true
+    }
+
+    val isSmartSuggestionsEnabled: Flow<Boolean> = context.userDataStore.data.map { preferences ->
+        preferences[SMART_SUGGESTIONS_KEY] ?: true
+    }
+
+    val isSmartDashboardWidgetEnabled: Flow<Boolean> = context.userDataStore.data.map { preferences ->
+        preferences[SMART_DASHBOARD_WIDGET_KEY] ?: true
+    }
+
     suspend fun saveLastBackupTimestamp(timestamp: Long) {
         context.userDataStore.edit { preferences ->
             preferences[LAST_BACKUP_TIMESTAMP_KEY] = timestamp
@@ -88,7 +118,12 @@ class UserPreferencesRepository(private val context: Context) {
             theme = prefs[THEME_KEY] ?: "system",
             budgetWarningThreshold = prefs[BUDGET_WARNING_THRESHOLD_KEY] ?: 0.7f,
             isHapticFeedbackEnabled = prefs[HAPTIC_FEEDBACK_KEY] ?: true,
-            isPaymentSetupCompleted = prefs[PAYMENT_SETUP_COMPLETED_KEY] ?: false
+            isPaymentSetupCompleted = prefs[PAYMENT_SETUP_COMPLETED_KEY] ?: false,
+            isSmartPaymentDetectionEnabled = prefs[SMART_PAYMENT_DETECTION_KEY] ?: true,
+            isSmartAutoMatchingEnabled = prefs[SMART_AUTO_MATCHING_KEY] ?: true,
+            isSmartAutoMarkPaidEnabled = prefs[SMART_AUTO_MARK_PAID_KEY] ?: true,
+            isSmartSuggestionsEnabled = prefs[SMART_SUGGESTIONS_KEY] ?: true,
+            isSmartDashboardWidgetEnabled = prefs[SMART_DASHBOARD_WIDGET_KEY] ?: true
         )
     }
 
@@ -100,6 +135,11 @@ class UserPreferencesRepository(private val context: Context) {
             preferences[BUDGET_WARNING_THRESHOLD_KEY] = snapshot.budgetWarningThreshold
             preferences[HAPTIC_FEEDBACK_KEY] = snapshot.isHapticFeedbackEnabled
             preferences[PAYMENT_SETUP_COMPLETED_KEY] = snapshot.isPaymentSetupCompleted
+            preferences[SMART_PAYMENT_DETECTION_KEY] = snapshot.isSmartPaymentDetectionEnabled
+            preferences[SMART_AUTO_MATCHING_KEY] = snapshot.isSmartAutoMatchingEnabled
+            preferences[SMART_AUTO_MARK_PAID_KEY] = snapshot.isSmartAutoMarkPaidEnabled
+            preferences[SMART_SUGGESTIONS_KEY] = snapshot.isSmartSuggestionsEnabled
+            preferences[SMART_DASHBOARD_WIDGET_KEY] = snapshot.isSmartDashboardWidgetEnabled
         }
     }
 
@@ -138,6 +178,26 @@ class UserPreferencesRepository(private val context: Context) {
         context.userDataStore.edit { preferences ->
             preferences[PAYMENT_SETUP_COMPLETED_KEY] = true
         }
+    }
+
+    suspend fun saveSmartPaymentDetection(enabled: Boolean) {
+        context.userDataStore.edit { preferences -> preferences[SMART_PAYMENT_DETECTION_KEY] = enabled }
+    }
+
+    suspend fun saveSmartAutoMatching(enabled: Boolean) {
+        context.userDataStore.edit { preferences -> preferences[SMART_AUTO_MATCHING_KEY] = enabled }
+    }
+
+    suspend fun saveSmartAutoMarkPaid(enabled: Boolean) {
+        context.userDataStore.edit { preferences -> preferences[SMART_AUTO_MARK_PAID_KEY] = enabled }
+    }
+
+    suspend fun saveSmartSuggestions(enabled: Boolean) {
+        context.userDataStore.edit { preferences -> preferences[SMART_SUGGESTIONS_KEY] = enabled }
+    }
+
+    suspend fun saveSmartDashboardWidget(enabled: Boolean) {
+        context.userDataStore.edit { preferences -> preferences[SMART_DASHBOARD_WIDGET_KEY] = enabled }
     }
 
     suspend fun clearAllPreferences() {

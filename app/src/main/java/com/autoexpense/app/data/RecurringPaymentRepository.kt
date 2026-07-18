@@ -3,6 +3,7 @@ package com.autoexpense.app.data
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlin.math.abs
 
 object RecurringPaymentRepository {
     private lateinit var dao: RecurringPaymentDao
@@ -29,7 +30,37 @@ object RecurringPaymentRepository {
         dao.updateStatus(id, status)
     }
 
+    suspend fun markMatchingPaymentPaid(
+        merchantOrRecipient: String,
+        amount: Double,
+        paidAt: Long
+    ): RecurringPaymentEntity? {
+        val normalizedMerchant = normalize(merchantOrRecipient)
+        val match = dao.getActive().firstOrNull { item ->
+            val merchantMatch = item.normalizedMerchant.contains(normalizedMerchant) ||
+                normalizedMerchant.contains(item.normalizedMerchant)
+            val amountTolerance = maxOf(25.0, item.amount * 0.15)
+            merchantMatch && abs(item.amount - amount) <= amountTolerance
+        } ?: return null
+        val nextExpectedAt = nextExpectedDate(match.frequency, paidAt)
+        dao.markPaid(match.id, paidAt, nextExpectedAt)
+        return match
+    }
+
     suspend fun delete(id: String) {
         dao.deleteById(id)
     }
+
+    private fun nextExpectedDate(frequency: String, paidAt: Long): Long {
+        val days = when {
+            frequency.equals("WEEKLY", ignoreCase = true) -> 7
+            frequency.equals("YEARLY", ignoreCase = true) -> 365
+            frequency.startsWith("EVERY_", ignoreCase = true) -> frequency.substringAfter("EVERY_").substringBefore("_DAYS").toIntOrNull() ?: 30
+            else -> 30
+        }
+        return paidAt + days * 24L * 60L * 60L * 1000L
+    }
+
+    private fun normalize(value: String): String =
+        value.lowercase().replace(Regex("""[^a-z0-9]+"""), "")
 }

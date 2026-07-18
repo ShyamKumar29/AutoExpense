@@ -139,6 +139,11 @@ object BackupCodec {
         prefsObj.put("budgetWarningThreshold", backup.data.preferences.budgetWarningThreshold.toDouble())
         prefsObj.put("isHapticFeedbackEnabled", backup.data.preferences.isHapticFeedbackEnabled)
         prefsObj.put("isPaymentSetupCompleted", backup.data.preferences.isPaymentSetupCompleted)
+        prefsObj.put("isSmartPaymentDetectionEnabled", backup.data.preferences.isSmartPaymentDetectionEnabled)
+        prefsObj.put("isSmartAutoMatchingEnabled", backup.data.preferences.isSmartAutoMatchingEnabled)
+        prefsObj.put("isSmartAutoMarkPaidEnabled", backup.data.preferences.isSmartAutoMarkPaidEnabled)
+        prefsObj.put("isSmartSuggestionsEnabled", backup.data.preferences.isSmartSuggestionsEnabled)
+        prefsObj.put("isSmartDashboardWidgetEnabled", backup.data.preferences.isSmartDashboardWidgetEnabled)
         dataObj.put("preferences", prefsObj)
 
         root.put("data", dataObj)
@@ -376,7 +381,12 @@ object BackupCodec {
                 theme = prefsObj.optString("theme", "system"),
                 budgetWarningThreshold = prefsObj.optDouble("budgetWarningThreshold", 0.7).toFloat(),
                 isHapticFeedbackEnabled = prefsObj.optBoolean("isHapticFeedbackEnabled", true),
-                isPaymentSetupCompleted = prefsObj.optBoolean("isPaymentSetupCompleted", false)
+                isPaymentSetupCompleted = prefsObj.optBoolean("isPaymentSetupCompleted", false),
+                isSmartPaymentDetectionEnabled = prefsObj.optBoolean("isSmartPaymentDetectionEnabled", true),
+                isSmartAutoMatchingEnabled = prefsObj.optBoolean("isSmartAutoMatchingEnabled", true),
+                isSmartAutoMarkPaidEnabled = prefsObj.optBoolean("isSmartAutoMarkPaidEnabled", true),
+                isSmartSuggestionsEnabled = prefsObj.optBoolean("isSmartSuggestionsEnabled", true),
+                isSmartDashboardWidgetEnabled = prefsObj.optBoolean("isSmartDashboardWidgetEnabled", true)
             )
 
             val payload = BackupPayloadDto(

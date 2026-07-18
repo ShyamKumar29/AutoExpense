@@ -14,6 +14,7 @@ import androidx.compose.material.icons.automirrored.outlined.ArrowForwardIos
 import androidx.compose.material.icons.automirrored.outlined.HelpOutline
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.outlined.DeleteForever
+import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.FileDownload
 import androidx.compose.material.icons.outlined.NotificationsActive
 import androidx.compose.material.icons.outlined.Palette
@@ -65,6 +66,11 @@ fun SettingsScreen(
     val userName by userPrefs.userName.collectAsState(initial = "User")
     val notificationEnabled by profileViewModel.notificationAccessEnabled.collectAsState()
     val isPaymentSetupCompleted by userPrefs.isPaymentSetupCompleted.collectAsState(initial = false)
+    val smartDetection by userPrefs.isSmartPaymentDetectionEnabled.collectAsState(initial = true)
+    val smartAutoMatching by userPrefs.isSmartAutoMatchingEnabled.collectAsState(initial = true)
+    val smartAutoMarkPaid by userPrefs.isSmartAutoMarkPaidEnabled.collectAsState(initial = true)
+    val smartSuggestions by userPrefs.isSmartSuggestionsEnabled.collectAsState(initial = true)
+    val smartDashboardWidget by userPrefs.isSmartDashboardWidgetEnabled.collectAsState(initial = true)
 
     var isBatteryExempt by remember {
         mutableStateOf(NotificationHealthRepository.isIgnoringBatteryOptimizations(context))
@@ -264,6 +270,38 @@ fun SettingsScreen(
                         )
                         Icon(Icons.AutoMirrored.Outlined.ArrowForwardIos, contentDescription = null, tint = ColorText2, modifier = Modifier.size(14.dp))
                     }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(20.dp))
+
+            // ── SMART PAYMENTS ───────────────────────────────────────────────
+            Text(
+                "SMART PAYMENTS",
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Bold,
+                color = ColorText3,
+                modifier = Modifier.padding(bottom = 8.dp)
+            )
+
+            Card(
+                colors = CardDefaults.cardColors(containerColor = ColorBg2),
+                shape = RoundedCornerShape(12.dp),
+                border = BorderStroke(1.dp, ColorBg3),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Outlined.AutoAwesome, contentDescription = null, tint = ColorOrange, modifier = Modifier.size(20.dp))
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Text("Smart Payments", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = ColorText1)
+                    }
+                    Spacer(modifier = Modifier.height(12.dp))
+                    SmartPaymentSettingRow("Enable Detection", smartDetection) { scope.launch { userPrefs.saveSmartPaymentDetection(it) } }
+                    SmartPaymentSettingRow("Enable Auto Matching", smartAutoMatching) { scope.launch { userPrefs.saveSmartAutoMatching(it) } }
+                    SmartPaymentSettingRow("Enable Auto Mark Paid", smartAutoMarkPaid) { scope.launch { userPrefs.saveSmartAutoMarkPaid(it) } }
+                    SmartPaymentSettingRow("Enable Suggestions", smartSuggestions) { scope.launch { userPrefs.saveSmartSuggestions(it) } }
+                    SmartPaymentSettingRow("Enable Dashboard Widget", smartDashboardWidget, showDivider = false) { scope.launch { userPrefs.saveSmartDashboardWidget(it) } }
                 }
             }
 
@@ -598,5 +636,33 @@ fun SettingsScreen(
                 }
             }
         )
+    }
+}
+
+@Composable
+private fun SmartPaymentSettingRow(
+    title: String,
+    checked: Boolean,
+    showDivider: Boolean = true,
+    onCheckedChange: (Boolean) -> Unit
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Text(title, fontSize = 14.sp, color = ColorText1, modifier = Modifier.weight(1f))
+        Switch(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+            colors = SwitchDefaults.colors(
+                checkedThumbColor = Color.White,
+                checkedTrackColor = ColorOrange,
+                uncheckedThumbColor = ColorText2,
+                uncheckedTrackColor = ColorBg1
+            )
+        )
+    }
+    if (showDivider) {
+        HorizontalDivider(modifier = Modifier.padding(vertical = 10.dp), color = ColorBg3)
     }
 }
