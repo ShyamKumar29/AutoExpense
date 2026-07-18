@@ -102,6 +102,19 @@ object SmsPaymentScanner {
         )
 
         if (payment == null) {
+            val bill = BillNotificationParser.parse(
+                title = sender,
+                body = body,
+                packageName = PaymentIngestion.DIRECT_SMS_PACKAGE,
+                timestamp = timestamp
+            )
+            if (bill != null) {
+                return BillIngestion.ingestParsedBill(
+                    bill = bill,
+                    origin = origin,
+                    sourceId = sourceId
+                )
+            }
             if (BuildConfig.DEBUG) {
                 Log.d(
                     TAG,

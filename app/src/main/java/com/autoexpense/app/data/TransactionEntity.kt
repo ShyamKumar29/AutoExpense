@@ -26,7 +26,9 @@ data class TransactionEntity(
     val transactionFingerprint: String,
     val createdAt: Long,
     val updatedAt: Long,
-    val rawMerchant: String = ""
+    val rawMerchant: String = "",
+    val paymentMethod: String = PaymentMethod.UNKNOWN.name,
+    val paymentInstrumentId: String? = null
 ) {
     fun toTransaction(): Transaction {
         val dateStr = SimpleDateFormat("d MMM, h:mm a", Locale.US).format(Date(timestamp))
@@ -44,7 +46,9 @@ data class TransactionEntity(
             detectionReason = detectionReason,
             timestamp = timestamp,
             note = note,
-            rawMerchant = if (rawMerchant.isNotBlank()) rawMerchant else merchantOrRecipient
+            rawMerchant = if (rawMerchant.isNotBlank()) rawMerchant else merchantOrRecipient,
+            paymentMethod = paymentMethod,
+            referenceNumber = transactionFingerprint.removePrefix("ref|")
         )
     }
 }

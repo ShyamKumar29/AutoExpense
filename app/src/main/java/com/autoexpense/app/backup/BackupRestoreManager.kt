@@ -34,6 +34,8 @@ object BackupRestoreManager {
         val customCategories = db.customCategoryDao().getAll().map { CustomCategoryBackupDto.fromEntity(it) }
         val merchantCategories = db.merchantCategoryDao().getAllMappings().map { MerchantCategoryBackupDto.fromEntity(it) }
         val merchantAliases = db.merchantAliasDao().getAllAliases().map { MerchantAliasBackupDto.fromEntity(it) }
+        val bills = db.billDao().getAll().map { BillBackupDto.fromEntity(it) }
+        val recurringPayments = db.recurringPaymentDao().getAll().map { RecurringPaymentBackupDto.fromEntity(it) }
         val prefsSnapshot = userPrefs.getPreferencesSnapshot()
 
         val timeFormatter = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US)
@@ -42,7 +44,7 @@ object BackupRestoreManager {
 
         AutoExpenseBackupFileDto(
             backupFormat = "AutoExpense",
-            schemaVersion = 1,
+            schemaVersion = 2,
             appVersion = "1.0",
             createdAt = createdAt,
             data = BackupPayloadDto(
@@ -51,6 +53,8 @@ object BackupRestoreManager {
                 customCategories = customCategories,
                 merchantCategories = merchantCategories,
                 merchantAliases = merchantAliases,
+                bills = bills,
+                recurringPayments = recurringPayments,
                 preferences = PreferencesBackupDto.fromSnapshot(prefsSnapshot)
             )
         )
@@ -94,12 +98,16 @@ object BackupRestoreManager {
                 db.customCategoryDao().deleteAll()
                 db.merchantCategoryDao().deleteAll()
                 db.merchantAliasDao().deleteAll()
+                db.billDao().deleteAll()
+                db.recurringPaymentDao().deleteAll()
 
                 db.transactionDao().insertAll(backupDto.data.transactions.map { it.toEntity() })
                 db.budgetDao().insertAll(backupDto.data.budgets.map { it.toEntity() })
                 db.customCategoryDao().insertAll(backupDto.data.customCategories.map { it.toEntity() })
                 db.merchantCategoryDao().insertAll(backupDto.data.merchantCategories.map { it.toEntity() })
                 db.merchantAliasDao().insertAll(backupDto.data.merchantAliases.map { it.toEntity() })
+                db.billDao().insertAll(backupDto.data.bills.map { it.toEntity() })
+                db.recurringPaymentDao().upsertAll(backupDto.data.recurringPayments.map { it.toEntity() })
             }
             userPrefs.restorePreferencesSnapshot(backupDto.data.preferences.toSnapshot())
             true

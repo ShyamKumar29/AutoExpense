@@ -4,6 +4,7 @@ import android.content.Context
 import android.util.Log
 import com.autoexpense.app.BuildConfig
 import com.autoexpense.app.TransactionRepository
+import com.autoexpense.app.data.BillRepository
 import com.autoexpense.app.data.TransactionEntity
 
 /**
@@ -35,6 +36,12 @@ object PaymentIngestion {
 
         return try {
             TransactionRepository.addTransactionEntity(toTransactionEntity(payment))
+            BillRepository.markMatchingPaymentPaid(
+                transactionId = payment.id,
+                merchantOrRecipient = payment.merchantOrRecipient,
+                amount = payment.amount,
+                paidAt = payment.timestamp
+            )
             if (context != null) {
                 NotificationHealthRepository.recordPaymentDetected(context, payment.timestamp)
             }
@@ -123,7 +130,8 @@ object PaymentIngestion {
             transactionFingerprint = fingerprintFor(payment),
             createdAt = System.currentTimeMillis(),
             updatedAt = System.currentTimeMillis(),
-            rawMerchant = rawMerchant
+            rawMerchant = rawMerchant,
+            paymentMethod = payment.paymentMethod.name
         )
     }
 }

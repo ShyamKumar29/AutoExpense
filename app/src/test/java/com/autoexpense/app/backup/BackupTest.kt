@@ -24,7 +24,8 @@ class BackupTest {
             transactionFingerprint = "fingerprint_1",
             createdAt = 1721070000000L,
             updatedAt = 1721070000000L,
-            rawMerchant = "SWIGGY LIMITED"
+            rawMerchant = "SWIGGY LIMITED",
+            paymentMethod = "UPI"
         )
 
         val txReview = TransactionBackupDto(
@@ -136,6 +137,7 @@ class BackupTest {
         assertEquals(1, restored.schemaVersion)
         assertEquals(2, restored.data.transactions.size)
         assertEquals("Swiggy", restored.data.transactions[0].merchantOrRecipient)
+        assertEquals("UPI", restored.data.transactions[0].paymentMethod)
         assertEquals("Localshop739", restored.data.transactions[1].merchantOrRecipient)
         assertEquals("Food & Dining", restored.data.budgets[0].category)
         assertEquals("Gaming", restored.data.customCategories[0].name)
@@ -183,7 +185,7 @@ class BackupTest {
     @Test
     fun testUnsupportedOlderAndNewerSchemaHandling() {
         val sample = createSampleBackupDto()
-        val jsonNewer = BackupCodec.toJson(sample).replace("\"schemaVersion\": 1", "\"schemaVersion\": 2")
+        val jsonNewer = BackupCodec.toJson(sample).replace("\"schemaVersion\": 1", "\"schemaVersion\": 3")
         val resultNewer = BackupCodec.parseAndValidate(jsonNewer)
         assertTrue(resultNewer is RestoreValidationResult.Error)
         assertEquals("This backup was created by a newer version of AutoExpense. Update the app before restoring it.", (resultNewer as RestoreValidationResult.Error).userMessage)

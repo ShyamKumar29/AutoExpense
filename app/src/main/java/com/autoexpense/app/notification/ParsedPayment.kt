@@ -1,5 +1,7 @@
 package com.autoexpense.app.notification
 
+import com.autoexpense.app.data.PaymentMethod
+
 enum class PaymentConfidence { HIGH, MEDIUM, LOW }
 
 /**
@@ -22,5 +24,6 @@ data class ParsedPayment(
     val safeNotificationExcerpt: String,
     val confidence: PaymentConfidence,
     val detectionReason: String,
-    val bankRefNumber: String? = null   // Phase 2.1: used for dedup
+    val bankRefNumber: String? = null,   // Phase 2.1: used for dedup
+    val paymentMethod: PaymentMethod = PaymentMethod.UNKNOWN
 )

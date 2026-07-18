@@ -19,11 +19,19 @@ class AutoExpenseApplication : Application() {
         TransactionRepository.init(this)
         val db = AutoExpenseDatabase.getDatabase(this)
         BudgetRepositorySingleton.init(BudgetRepository(db.budgetDao()))
+        com.autoexpense.app.data.BillRepository.init(db.billDao())
+        com.autoexpense.app.data.RecurringPaymentRepository.init(db.recurringPaymentDao())
         com.autoexpense.app.data.CustomCategoryRepository.init(db.customCategoryDao())
         com.autoexpense.app.data.MerchantCategoryRepository.init(db.merchantCategoryDao())
         com.autoexpense.app.data.MerchantAliasRepository.init(db.merchantAliasDao())
         BudgetNotificationHelper.createChannel(this)
 
+        applicationScope.launch {
+            com.autoexpense.app.data.BillRepository.collectBills()
+        }
+        applicationScope.launch {
+            com.autoexpense.app.data.RecurringPaymentRepository.collectItems()
+        }
         applicationScope.launch {
             SmsPaymentScanner.scanRecent(this@AutoExpenseApplication)
         }

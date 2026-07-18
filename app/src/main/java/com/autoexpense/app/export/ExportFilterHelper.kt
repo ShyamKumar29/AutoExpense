@@ -214,7 +214,7 @@ object ExportFilterHelper {
 
     fun generateCsvContent(transactions: List<TransactionEntity>): String {
         val sb = StringBuilder()
-        sb.append("Transaction ID,Date,Time,Merchant or Recipient,Category,Payment Source,Note,Amount,Currency,Status\r\n")
+        sb.append("Transaction ID,Date,Time,Merchant or Recipient,Category,Payment Source,Payment Method,Note,Amount,Currency,Status\r\n")
 
         val dateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.US)
         val timeFormat = SimpleDateFormat("HH:mm:ss", Locale.US)
@@ -231,6 +231,7 @@ object ExportFilterHelper {
                 escapeCsv(t.merchantOrRecipient),
                 escapeCsv(t.category),
                 escapeCsv(t.source),
+                escapeCsv(com.autoexpense.app.data.PaymentMethod.labelFor(t.paymentMethod)),
                 escapeCsv(t.note),
                 escapeCsv(cleanAmt),
                 escapeCsv(if (t.currency.isNotEmpty()) t.currency else "INR"),

@@ -222,6 +222,22 @@ object NotificationProcessor {
         )
 
         if (payment == null) {
+            val bill = BillNotificationParser.parse(
+                title = title,
+                body = body,
+                packageName = packageName,
+                timestamp = timestamp
+            )
+            if (bill != null) {
+                kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+                    BillIngestion.ingestParsedBill(
+                        bill = bill,
+                        origin = if (isRecoverySweep) "notification_recovery" else "notification",
+                        sourceId = "$packageName#$notificationId"
+                    )
+                }
+                return
+            }
             if (BuildConfig.DEBUG) {
                 Log.d(TAG, "PARSER_REJECTED pkg=$packageName id=$notificationId " +
                     "path=$parserPath recovery=$isRecoverySweep " +

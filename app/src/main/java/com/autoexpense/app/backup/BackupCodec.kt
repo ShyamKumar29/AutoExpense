@@ -38,6 +38,8 @@ object BackupCodec {
             obj.put("createdAt", tx.createdAt)
             obj.put("updatedAt", tx.updatedAt)
             obj.put("rawMerchant", tx.rawMerchant)
+            obj.put("paymentMethod", tx.paymentMethod)
+            obj.put("paymentInstrumentId", tx.paymentInstrumentId ?: JSONObject.NULL)
             txArray.put(obj)
         }
         dataObj.put("transactions", txArray)
@@ -89,6 +91,47 @@ object BackupCodec {
         }
         dataObj.put("merchantAliases", maArray)
 
+        val billsArray = JSONArray()
+        for (bill in backup.data.bills) {
+            val obj = JSONObject()
+            obj.put("id", bill.id)
+            obj.put("billType", bill.billType)
+            obj.put("provider", bill.provider)
+            obj.put("amount", bill.amount)
+            obj.put("currency", bill.currency)
+            obj.put("dueDate", bill.dueDate ?: JSONObject.NULL)
+            obj.put("status", bill.status)
+            obj.put("generatedAt", bill.generatedAt)
+            obj.put("paidAt", bill.paidAt ?: JSONObject.NULL)
+            obj.put("paidTransactionId", bill.paidTransactionId ?: JSONObject.NULL)
+            obj.put("source", bill.source)
+            obj.put("safeExcerpt", bill.safeExcerpt)
+            obj.put("billFingerprint", bill.billFingerprint)
+            obj.put("createdAt", bill.createdAt)
+            obj.put("updatedAt", bill.updatedAt)
+            billsArray.put(obj)
+        }
+        dataObj.put("bills", billsArray)
+
+        val recurringArray = JSONArray()
+        for (item in backup.data.recurringPayments) {
+            val obj = JSONObject()
+            obj.put("id", item.id)
+            obj.put("merchant", item.merchant)
+            obj.put("normalizedMerchant", item.normalizedMerchant)
+            obj.put("amount", item.amount)
+            obj.put("currency", item.currency)
+            obj.put("frequency", item.frequency)
+            obj.put("lastPaymentAt", item.lastPaymentAt)
+            obj.put("nextExpectedAt", item.nextExpectedAt)
+            obj.put("status", item.status)
+            obj.put("confidence", item.confidence.toDouble())
+            obj.put("createdAt", item.createdAt)
+            obj.put("updatedAt", item.updatedAt)
+            recurringArray.put(obj)
+        }
+        dataObj.put("recurringPayments", recurringArray)
+
         val prefsObj = JSONObject()
         prefsObj.put("userName", backup.data.preferences.userName)
         prefsObj.put("isOnboardingCompleted", backup.data.preferences.isOnboardingCompleted)
@@ -126,7 +169,7 @@ object BackupCodec {
             return RestoreValidationResult.Error("This is not a valid AutoExpense backup.")
         }
 
-        if (schemaVersion > 1) {
+        if (schemaVersion > 2) {
             return RestoreValidationResult.Error("This backup was created by a newer version of AutoExpense. Update the app before restoring it.")
         }
         if (schemaVersion < 1) {
@@ -186,7 +229,9 @@ object BackupCodec {
                         transactionFingerprint = obj.optString("transactionFingerprint", ""),
                         createdAt = obj.optLong("createdAt", timestamp),
                         updatedAt = obj.optLong("updatedAt", timestamp),
-                        rawMerchant = obj.optString("rawMerchant", "")
+                        rawMerchant = obj.optString("rawMerchant", ""),
+                        paymentMethod = obj.optString("paymentMethod", "UNKNOWN"),
+                        paymentInstrumentId = if (obj.isNull("paymentInstrumentId")) null else obj.optString("paymentInstrumentId", "").ifBlank { null }
                     )
                 )
             }
@@ -273,6 +318,57 @@ object BackupCodec {
                 )
             }
 
+            val billsList = mutableListOf<BillBackupDto>()
+            if (dataObj.has("bills") && !dataObj.isNull("bills")) {
+                val billsArray = dataObj.getJSONArray("bills")
+                for (i in 0 until billsArray.length()) {
+                    val obj = billsArray.getJSONObject(i)
+                    billsList.add(
+                        BillBackupDto(
+                            id = obj.getString("id"),
+                            billType = obj.getString("billType"),
+                            provider = obj.getString("provider"),
+                            amount = obj.getDouble("amount"),
+                            currency = obj.optString("currency", "INR"),
+                            dueDate = if (obj.isNull("dueDate")) null else obj.getLong("dueDate"),
+                            status = obj.getString("status"),
+                            generatedAt = obj.getLong("generatedAt"),
+                            paidAt = if (obj.isNull("paidAt")) null else obj.getLong("paidAt"),
+                            paidTransactionId = if (obj.isNull("paidTransactionId")) null else obj.getString("paidTransactionId"),
+                            source = obj.optString("source", ""),
+                            safeExcerpt = obj.optString("safeExcerpt", ""),
+                            billFingerprint = obj.getString("billFingerprint"),
+                            createdAt = obj.optLong("createdAt", obj.getLong("generatedAt")),
+                            updatedAt = obj.optLong("updatedAt", obj.getLong("generatedAt"))
+                        )
+                    )
+                }
+            }
+
+            val recurringList = mutableListOf<RecurringPaymentBackupDto>()
+            if (dataObj.has("recurringPayments") && !dataObj.isNull("recurringPayments")) {
+                val recurringArray = dataObj.getJSONArray("recurringPayments")
+                for (i in 0 until recurringArray.length()) {
+                    val obj = recurringArray.getJSONObject(i)
+                    recurringList.add(
+                        RecurringPaymentBackupDto(
+                            id = obj.getString("id"),
+                            merchant = obj.getString("merchant"),
+                            normalizedMerchant = obj.getString("normalizedMerchant"),
+                            amount = obj.getDouble("amount"),
+                            currency = obj.optString("currency", "INR"),
+                            frequency = obj.getString("frequency"),
+                            lastPaymentAt = obj.getLong("lastPaymentAt"),
+                            nextExpectedAt = obj.getLong("nextExpectedAt"),
+                            status = obj.getString("status"),
+                            confidence = obj.optDouble("confidence", 0.8).toFloat(),
+                            createdAt = obj.optLong("createdAt", obj.getLong("lastPaymentAt")),
+                            updatedAt = obj.optLong("updatedAt", obj.getLong("lastPaymentAt"))
+                        )
+                    )
+                }
+            }
+
             val prefsObj = dataObj.getJSONObject("preferences")
             val preferencesDto = PreferencesBackupDto(
                 userName = prefsObj.optString("userName", ""),
@@ -289,6 +385,8 @@ object BackupCodec {
                 customCategories = customCategoriesList,
                 merchantCategories = mcList,
                 merchantAliases = maList,
+                bills = billsList,
+                recurringPayments = recurringList,
                 preferences = preferencesDto
             )
 

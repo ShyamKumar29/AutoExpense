@@ -187,12 +187,13 @@ object ExportFileGenerator {
         canvas.drawText("Transaction table", margin, yPos, paintSection)
         yPos += 16f
 
-        // Table Header: Date | Merchant | Category | Source | Note | Amount
+        // Table Header: Date | Merchant | Category | Source | Method | Amount
         val cDate = margin
         val cMerchant = margin + 65f
-        val cCategory = margin + 190f
-        val cSource = margin + 295f
-        val cNote = margin + 355f
+        val cCategory = margin + 175f
+        val cSource = margin + 270f
+        val cMethod = margin + 330f
+        val cNote = margin + 390f
         val cAmount = margin + 445f
 
         fun drawTableHeader(c: Canvas, y: Float) {
@@ -200,6 +201,7 @@ object ExportFileGenerator {
             c.drawText("Merchant", cMerchant, y, paintBold)
             c.drawText("Category", cCategory, y, paintBold)
             c.drawText("Source", cSource, y, paintBold)
+            c.drawText("Method", cMethod, y, paintBold)
             c.drawText("Note", cNote, y, paintBold)
             c.drawText("Amount", cAmount, y, paintBold)
         }
@@ -213,10 +215,11 @@ object ExportFileGenerator {
 
         for (t in transactions) {
             val dateStr = if (t.timestamp > 0) dateFormat.format(Date(t.timestamp)) else ""
-            val merchantLines = wrapText(t.merchantOrRecipient, paintText, 115f)
-            val categoryText = truncateText(t.category, paintText, 95f)
+            val merchantLines = wrapText(t.merchantOrRecipient, paintText, 100f)
+            val categoryText = truncateText(t.category, paintText, 85f)
             val sourceText = truncateText(t.source, paintText, 50f)
-            val noteLines = wrapText(if (t.note.isNotEmpty()) t.note else "-", paintText, 80f)
+            val methodText = truncateText(com.autoexpense.app.data.PaymentMethod.labelFor(t.paymentMethod), paintText, 55f)
+            val noteLines = wrapText(if (t.note.isNotEmpty()) t.note else "-", paintText, 50f)
             val amtVal = ExportFilterHelper.parseAmount(t.amount)
             val amtStr = ExportFilterHelper.formatIndianCurrency(amtVal)
 
@@ -241,6 +244,7 @@ object ExportFileGenerator {
             canvas.drawText(dateStr, cDate, yPos, paintText)
             canvas.drawText(categoryText, cCategory, yPos, paintText)
             canvas.drawText(sourceText, cSource, yPos, paintText)
+            canvas.drawText(methodText, cMethod, yPos, paintText)
             canvas.drawText(amtStr, cAmount, yPos, paintText)
 
             for (i in 0 until maxLines) {

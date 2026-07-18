@@ -19,7 +19,9 @@ data class TransactionBackupDto(
     val transactionFingerprint: String,
     val createdAt: Long,
     val updatedAt: Long,
-    val rawMerchant: String
+    val rawMerchant: String,
+    val paymentMethod: String = "UNKNOWN",
+    val paymentInstrumentId: String? = null
 ) {
     fun toEntity(): TransactionEntity = TransactionEntity(
         id = id,
@@ -38,7 +40,9 @@ data class TransactionBackupDto(
         transactionFingerprint = transactionFingerprint,
         createdAt = createdAt,
         updatedAt = updatedAt,
-        rawMerchant = rawMerchant
+        rawMerchant = rawMerchant,
+        paymentMethod = paymentMethod,
+        paymentInstrumentId = paymentInstrumentId
     )
 
     companion object {
@@ -59,7 +63,9 @@ data class TransactionBackupDto(
             transactionFingerprint = entity.transactionFingerprint,
             createdAt = entity.createdAt,
             updatedAt = entity.updatedAt,
-            rawMerchant = entity.rawMerchant
+            rawMerchant = entity.rawMerchant,
+            paymentMethod = entity.paymentMethod,
+            paymentInstrumentId = entity.paymentInstrumentId
         )
     }
 }
@@ -165,6 +171,109 @@ data class MerchantAliasBackupDto(
     }
 }
 
+data class BillBackupDto(
+    val id: String,
+    val billType: String,
+    val provider: String,
+    val amount: Double,
+    val currency: String,
+    val dueDate: Long?,
+    val status: String,
+    val generatedAt: Long,
+    val paidAt: Long?,
+    val paidTransactionId: String?,
+    val source: String,
+    val safeExcerpt: String,
+    val billFingerprint: String,
+    val createdAt: Long,
+    val updatedAt: Long
+) {
+    fun toEntity(): BillEntity = BillEntity(
+        id = id,
+        billType = billType,
+        provider = provider,
+        amount = amount,
+        currency = currency,
+        dueDate = dueDate,
+        status = status,
+        generatedAt = generatedAt,
+        paidAt = paidAt,
+        paidTransactionId = paidTransactionId,
+        source = source,
+        safeExcerpt = safeExcerpt,
+        billFingerprint = billFingerprint,
+        createdAt = createdAt,
+        updatedAt = updatedAt
+    )
+
+    companion object {
+        fun fromEntity(entity: BillEntity): BillBackupDto = BillBackupDto(
+            id = entity.id,
+            billType = entity.billType,
+            provider = entity.provider,
+            amount = entity.amount,
+            currency = entity.currency,
+            dueDate = entity.dueDate,
+            status = entity.status,
+            generatedAt = entity.generatedAt,
+            paidAt = entity.paidAt,
+            paidTransactionId = entity.paidTransactionId,
+            source = entity.source,
+            safeExcerpt = entity.safeExcerpt,
+            billFingerprint = entity.billFingerprint,
+            createdAt = entity.createdAt,
+            updatedAt = entity.updatedAt
+        )
+    }
+}
+
+data class RecurringPaymentBackupDto(
+    val id: String,
+    val merchant: String,
+    val normalizedMerchant: String,
+    val amount: Double,
+    val currency: String,
+    val frequency: String,
+    val lastPaymentAt: Long,
+    val nextExpectedAt: Long,
+    val status: String,
+    val confidence: Float,
+    val createdAt: Long,
+    val updatedAt: Long
+) {
+    fun toEntity(): RecurringPaymentEntity = RecurringPaymentEntity(
+        id = id,
+        merchant = merchant,
+        normalizedMerchant = normalizedMerchant,
+        amount = amount,
+        currency = currency,
+        frequency = frequency,
+        lastPaymentAt = lastPaymentAt,
+        nextExpectedAt = nextExpectedAt,
+        status = status,
+        confidence = confidence,
+        createdAt = createdAt,
+        updatedAt = updatedAt
+    )
+
+    companion object {
+        fun fromEntity(entity: RecurringPaymentEntity): RecurringPaymentBackupDto = RecurringPaymentBackupDto(
+            id = entity.id,
+            merchant = entity.merchant,
+            normalizedMerchant = entity.normalizedMerchant,
+            amount = entity.amount,
+            currency = entity.currency,
+            frequency = entity.frequency,
+            lastPaymentAt = entity.lastPaymentAt,
+            nextExpectedAt = entity.nextExpectedAt,
+            status = entity.status,
+            confidence = entity.confidence,
+            createdAt = entity.createdAt,
+            updatedAt = entity.updatedAt
+        )
+    }
+}
+
 data class PreferencesBackupDto(
     val userName: String,
     val isOnboardingCompleted: Boolean,
@@ -200,12 +309,14 @@ data class BackupPayloadDto(
     val customCategories: List<CustomCategoryBackupDto>,
     val merchantCategories: List<MerchantCategoryBackupDto>,
     val merchantAliases: List<MerchantAliasBackupDto>,
+    val bills: List<BillBackupDto> = emptyList(),
+    val recurringPayments: List<RecurringPaymentBackupDto> = emptyList(),
     val preferences: PreferencesBackupDto
 )
 
 data class AutoExpenseBackupFileDto(
     val backupFormat: String = "AutoExpense",
-    val schemaVersion: Int = 1,
+    val schemaVersion: Int = 2,
     val appVersion: String = "1.0",
     val createdAt: String,
     val data: BackupPayloadDto

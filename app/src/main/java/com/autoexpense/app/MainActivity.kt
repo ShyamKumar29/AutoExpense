@@ -28,6 +28,11 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.automirrored.filled.ReceiptLong
+import androidx.compose.material.icons.automirrored.filled.Sort
+import androidx.compose.material.icons.automirrored.outlined.ArrowForwardIos
+import androidx.compose.material.icons.automirrored.outlined.HelpOutline
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
@@ -81,7 +86,7 @@ import androidx.compose.foundation.lazy.items
 import android.content.Context
 import android.provider.Settings
 import androidx.compose.runtime.DisposableEffect
-import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.compose.material.icons.filled.Person
@@ -93,6 +98,7 @@ import com.autoexpense.app.notification.NotificationProcessor
 import com.autoexpense.app.data.AutoExpenseDatabase
 import com.autoexpense.app.data.TransactionDao
 import com.autoexpense.app.data.TransactionEntity
+import com.autoexpense.app.data.PaymentMethod
 import com.autoexpense.app.data.PeriodType
 import com.autoexpense.app.budget.BudgetLevel
 import com.autoexpense.app.budget.BudgetNotificationHelper
@@ -210,7 +216,9 @@ data class Transaction(
     val detectionReason: String = "",
     val timestamp: Long = 0L,
     var note: String = "",
-    val rawMerchant: String = ""
+    val rawMerchant: String = "",
+    val paymentMethod: String = PaymentMethod.UNKNOWN.name,
+    val referenceNumber: String = ""
 )
 
 // ── TRANSACTION REPOSITORY (Single Source of Truth) ─────────────────────────
@@ -607,6 +615,7 @@ data class ReceiptsFilterSettings(
     val dateFilter: DateFilter? = null,
     val categoryFilter: CategoryFilterOption = CategoryFilterOption.ALL,
     val sourceFilter: String? = null,
+    val paymentMethodFilter: String? = null,
     val minAmount: Double? = null,
     val maxAmount: Double? = null,
     val sortOption: SortOption = SortOption.NEWEST_FIRST
@@ -616,6 +625,7 @@ data class ReceiptsFilterSettings(
                 dateFilter != null ||
                 categoryFilter != CategoryFilterOption.ALL ||
                 !sourceFilter.isNullOrEmpty() ||
+                !paymentMethodFilter.isNullOrEmpty() ||
                 minAmount != null ||
                 maxAmount != null
     }
@@ -625,6 +635,7 @@ data class ReceiptsFilterSettings(
         if (dateFilter != null) count++
         if (categoryFilter != CategoryFilterOption.ALL) count++
         if (!sourceFilter.isNullOrEmpty()) count++
+        if (!paymentMethodFilter.isNullOrEmpty()) count++
         if (minAmount != null || maxAmount != null) count++
         return count
     }
@@ -665,6 +676,14 @@ class ReceiptsViewModel : ViewModel() {
         _filterSettings.value = _filterSettings.value.copy(sourceFilter = null)
     }
 
+    fun setPaymentMethodFilter(method: String?) {
+        _filterSettings.value = _filterSettings.value.copy(paymentMethodFilter = if (method.isNullOrBlank()) null else method)
+    }
+
+    fun clearPaymentMethodFilter() {
+        _filterSettings.value = _filterSettings.value.copy(paymentMethodFilter = null)
+    }
+
     fun setAmountRange(min: Double?, max: Double?) {
         _filterSettings.value = _filterSettings.value.copy(minAmount = min, maxAmount = max)
     }
@@ -699,6 +718,14 @@ class ReceiptsViewModel : ViewModel() {
         list.filter { it.status.equals("confirmed", ignoreCase = true) }
             .map { it.source.trim() }
             .filter { it.isNotEmpty() }
+            .distinct()
+            .sorted()
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val dynamicPaymentMethods: StateFlow<List<String>> = TransactionRepository.transactions.map { list ->
+        list.filter { it.status.equals("confirmed", ignoreCase = true) }
+            .map { it.paymentMethod.trim() }
+            .filter { it.isNotEmpty() && !it.equals(PaymentMethod.UNKNOWN.name, ignoreCase = true) }
             .distinct()
             .sorted()
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -739,9 +766,11 @@ class ReceiptsViewModel : ViewModel() {
                     true
                 } else {
                     t.merchant.contains(q, ignoreCase = true) ||
+                    t.amount.contains(q, ignoreCase = true) ||
                     t.category.contains(q, ignoreCase = true) ||
                     t.note.contains(q, ignoreCase = true) ||
-                    t.source.contains(q, ignoreCase = true)
+                    t.source.contains(q, ignoreCase = true) ||
+                    PaymentMethod.labelFor(t.paymentMethod).contains(q, ignoreCase = true)
                 }
                 if (!matchesSearch) return@filter false
 
@@ -768,6 +797,13 @@ class ReceiptsViewModel : ViewModel() {
                     t.source.equals(settings.sourceFilter, ignoreCase = true)
                 }
                 if (!matchesSource) return@filter false
+
+                val matchesMethod = if (settings.paymentMethodFilter.isNullOrEmpty()) {
+                    true
+                } else {
+                    t.paymentMethod.equals(settings.paymentMethodFilter, ignoreCase = true)
+                }
+                if (!matchesMethod) return@filter false
 
                 // 5. Amount range filter
                 val amt = parseAmountHelper(t.amount)
@@ -1014,6 +1050,7 @@ fun MainAppContainer(
                             onBackToDashboard = { activeScreen = "dashboard" }
                         )
                         "budget" -> BudgetScreen(viewModel = budgetViewModel)
+                        "payments" -> com.autoexpense.app.finance.PaymentsScreen()
                         "profile" -> ProfileScreen(
                             viewModel = profileViewModel,
                             onNavigateBack = { activeScreen = "dashboard" },
@@ -1085,7 +1122,7 @@ fun AppBottomBar(
             selected = activeScreen == "dashboard",
             onClick = { onNavigate("dashboard") },
             icon = { Icon(Icons.Default.Dashboard, contentDescription = "Dashboard") },
-            label = { Text("Dashboard") },
+            label = { BottomNavLabel("Dashboard") },
             colors = NavigationBarItemDefaults.colors(
                 selectedIconColor = ColorOrange,
                 selectedTextColor = ColorOrange,
@@ -1097,8 +1134,8 @@ fun AppBottomBar(
         NavigationBarItem(
             selected = activeScreen == "receipts",
             onClick = { onNavigate("receipts") },
-            icon = { Icon(Icons.Default.ReceiptLong, contentDescription = "Receipts") },
-            label = { Text("Receipts") },
+            icon = { Icon(Icons.AutoMirrored.Filled.ReceiptLong, contentDescription = "Receipts") },
+            label = { BottomNavLabel("Receipts") },
             colors = NavigationBarItemDefaults.colors(
                 selectedIconColor = ColorOrange,
                 selectedTextColor = ColorOrange,
@@ -1123,7 +1160,7 @@ fun AppBottomBar(
                     Icon(Icons.Default.RateReview, contentDescription = "Needs Review")
                 }
             },
-            label = { Text("Review") },
+            label = { BottomNavLabel("Review") },
             colors = NavigationBarItemDefaults.colors(
                 selectedIconColor = ColorOrange,
                 selectedTextColor = ColorOrange,
@@ -1136,7 +1173,20 @@ fun AppBottomBar(
             selected = activeScreen == "budget",
             onClick = { onNavigate("budget") },
             icon = { Icon(Icons.Default.AccountBalance, contentDescription = "Budget") },
-            label = { Text("Budget") },
+            label = { BottomNavLabel("Budget") },
+            colors = NavigationBarItemDefaults.colors(
+                selectedIconColor = ColorOrange,
+                selectedTextColor = ColorOrange,
+                unselectedIconColor = ColorText2,
+                unselectedTextColor = ColorText2,
+                indicatorColor = ColorOrangeDim
+            )
+        )
+        NavigationBarItem(
+            selected = activeScreen == "payments",
+            onClick = { onNavigate("payments") },
+            icon = { Icon(Icons.Default.Payments, contentDescription = "Payments") },
+            label = { BottomNavLabel("Payments") },
             colors = NavigationBarItemDefaults.colors(
                 selectedIconColor = ColorOrange,
                 selectedTextColor = ColorOrange,
@@ -1149,7 +1199,7 @@ fun AppBottomBar(
             selected = activeScreen == "profile",
             onClick = { onNavigate("profile") },
             icon = { Icon(Icons.Default.Person, contentDescription = "Profile") },
-            label = { Text("Profile") },
+            label = { BottomNavLabel("Profile") },
             colors = NavigationBarItemDefaults.colors(
                 selectedIconColor = ColorOrange,
                 selectedTextColor = ColorOrange,
@@ -1162,6 +1212,17 @@ fun AppBottomBar(
 }
 
 // ── DEPRECATED LOGIN SCREEN (Replaced by OnboardingScreen in Phase 2/3) ───
+@Composable
+fun BottomNavLabel(text: String) {
+    Text(
+        text = text,
+        fontSize = 9.sp,
+        fontWeight = FontWeight.SemiBold,
+        maxLines = 1,
+        softWrap = false
+    )
+}
+
 @Composable
 fun LoginScreen(onLoginSuccess: () -> Unit) {
     LaunchedEffect(Unit) { onLoginSuccess() }
@@ -1180,7 +1241,8 @@ fun DashboardScreen(
     onNavigateToReceiptsWithFilter: (Long, Long, String) -> Unit = { _, _, _ -> onNavigate("receipts") }
 ) {
     var searchQuery by remember { mutableStateOf("") }
-    var chartType by remember { mutableStateOf("weekly") } // "weekly" or "monthly"
+    var chartType by remember { mutableStateOf("weekly") }
+    var analyticsTab by remember { mutableStateOf("cash") }
 
     val transactions by viewModel.transactions.collectAsState()
     val totalSpent by viewModel.totalSpent.collectAsState()
@@ -1198,19 +1260,19 @@ fun DashboardScreen(
             .background(ColorBg0)
             .verticalScroll(rememberScrollState())
     ) {
-        DashboardTopBar(userName = userName, onProfileClick = onProfileClick)
+        DashboardTopBar(userName = userName, totalSpent = totalSpent, onProfileClick = onProfileClick)
 
         // Phase 2: dismissible notification-access setup card.
         if (showNotificationSetupCard) {
             NotificationSetupCard(
                 onEnable = onEnableAccess,
                 onDismiss = onDismissSetupCard,
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)
             )
         }
 
         Column(modifier = Modifier.padding(horizontal = 16.dp)) {
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(20.dp))
 
             // METRICS GRID
             MetricsRow(
@@ -1227,25 +1289,25 @@ fun DashboardScreen(
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // CHART CARD
             val currentChartData = if (chartType == "weekly") weeklyChartData else monthlyChartData
-            ChartCard(
+            AnalyticsSection(
+                selectedTab = analyticsTab,
+                onTabChange = { analyticsTab = it },
                 chartData = currentChartData,
                 chartType = chartType,
-                onTypeChange = { chartType = it },
+                onChartTypeChange = { chartType = it },
                 transactions = transactions,
+                periodType = chartType,
                 onNavigateToReceiptsWithFilter = onNavigateToReceiptsWithFilter
             )
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(22.dp))
 
-            SpendingByCategoryCard(
-                transactions = transactions,
-                periodType = chartType,
-                onPeriodChange = { chartType = it }
+            com.autoexpense.app.finance.UpcomingDashboardCard(
+                onViewAll = { onNavigate("payments") }
             )
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(22.dp))
 
             // LIVE SEARCH & TRANSACTIONS TABLE
             Text(
@@ -1278,7 +1340,8 @@ fun DashboardScreen(
                 !it.status.equals("ignored", ignoreCase = true) && !it.status.equals("duplicate", ignoreCase = true) && (
                     it.merchant.contains(searchQuery, ignoreCase = true) ||
                     it.category.contains(searchQuery, ignoreCase = true) ||
-                    it.source.contains(searchQuery, ignoreCase = true)
+                    it.source.contains(searchQuery, ignoreCase = true) ||
+                    PaymentMethod.labelFor(it.paymentMethod).contains(searchQuery, ignoreCase = true)
                 )
             }.sortedByDescending { it.timestamp }
 
@@ -1292,37 +1355,29 @@ fun DashboardScreen(
 @Composable
 fun DashboardTopBar(
     userName: String = "",
+    totalSpent: String = "₹0",
     onProfileClick: () -> Unit = {}
 ) {
-    val currentMonth = remember {
-        java.text.SimpleDateFormat("MMMM", java.util.Locale.US).format(java.util.Date())
-    }
-    val greeting = remember(userName) {
-        val hour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
-        val timeGreeting = when {
-            hour < 12 -> "Good morning"
-            hour < 17 -> "Good afternoon"
-            else -> "Good evening"
-        }
-        val namePart = if (userName.isNotBlank() && userName != "User") ", $userName" else ""
-        "$timeGreeting$namePart"
-    }
+    val displayName = if (userName.isNotBlank() && userName != "User") userName.trim() else "there"
 
-    Row(
+    Column(
         modifier = Modifier
             .fillMaxWidth()
-            .background(ColorBg1)
-            .padding(horizontal = 20.dp, vertical = 16.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween
+            .background(Brush.verticalGradient(listOf(ColorBg1, ColorBg0)))
+            .padding(horizontal = 20.dp, vertical = 24.dp)
     ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-            com.autoexpense.app.ui.AutoExpenseLogo(size = 36.dp, tint = ColorOrange)
-            Spacer(modifier = Modifier.width(12.dp))
+            com.autoexpense.app.ui.AutoExpenseLogo(size = 40.dp, tint = ColorOrange)
+            Spacer(modifier = Modifier.width(14.dp))
             Column {
-                Text(greeting, fontWeight = FontWeight.Bold, color = ColorText1, fontSize = 18.sp)
-                Spacer(modifier = Modifier.height(2.dp))
-                Text("Here’s your spending overview for $currentMonth.", color = ColorText2, fontSize = 12.sp)
+                Text("Hello, $displayName 👋", fontWeight = FontWeight.ExtraBold, color = ColorText1, fontSize = 24.sp)
+                Spacer(modifier = Modifier.height(6.dp))
+                Text("You spent $totalSpent this month.", color = ColorText2, fontSize = 14.sp, fontWeight = FontWeight.Medium)
             }
         }
 
@@ -1333,9 +1388,9 @@ fun DashboardTopBar(
             Spacer(modifier = Modifier.width(4.dp))
             Box(
                 modifier = Modifier
-                    .size(36.dp)
+                    .size(42.dp)
                     .clip(CircleShape)
-                    .background(ColorOrange)
+                    .background(Brush.linearGradient(listOf(ColorOrange, ColorOrangeDark)))
                     .clickable { onProfileClick() },
                 contentAlignment = Alignment.Center
             ) {
@@ -1344,9 +1399,10 @@ fun DashboardTopBar(
                 } else {
                     "AE"
                 }
-                Text(initials, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                Text(initials, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
             }
         }
+    }
     }
 }
 
@@ -1458,14 +1514,29 @@ fun MetricCard(
     icon: ImageVector? = null
 ) {
     Card(
-        colors = CardDefaults.cardColors(containerColor = ColorBg2),
+        colors = CardDefaults.cardColors(containerColor = Color.Transparent),
         shape = RoundedCornerShape(22.dp),
-        border = BorderStroke(1.dp, ColorBg3),
+        border = BorderStroke(1.dp, ColorBg3.copy(alpha = 0.8f)),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
         modifier = modifier
     ) {
-        Column(modifier = Modifier.padding(16.dp)) {
+        Column(
+            modifier = Modifier
+                .background(
+                    Brush.radialGradient(
+                        colors = listOf(
+                            ColorOrange.copy(alpha = 0.10f),
+                            ColorBg2.copy(alpha = 0.98f),
+                            ColorBg2
+                        ),
+                        center = Offset(40f, 0f),
+                        radius = 360f
+                    )
+                )
+                .padding(16.dp)
+        ) {
             Text(label.uppercase(), fontSize = 10.sp, color = ColorText3, fontWeight = FontWeight.Bold)
-            Spacer(modifier = Modifier.height(4.dp))
+            Spacer(modifier = Modifier.height(8.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
                 if (icon != null) {
                     Icon(
@@ -1487,13 +1558,93 @@ fun MetricCard(
                     Text(value, fontSize = 18.sp, fontWeight = FontWeight.Bold, color = ColorText1)
                 }
             }
-            Spacer(modifier = Modifier.height(4.dp))
+            Spacer(modifier = Modifier.height(6.dp))
             Text(subText, fontSize = 11.sp, color = subTextColor)
         }
     }
 }
 
 // ── CUSTOM CANVAS CHART CARD ──────────────────────────────────────────────
+@Composable
+fun AnalyticsSection(
+    selectedTab: String,
+    onTabChange: (String) -> Unit,
+    chartData: CashFlowChartData,
+    chartType: String,
+    onChartTypeChange: (String) -> Unit,
+    transactions: List<Transaction>,
+    periodType: String,
+    onNavigateToReceiptsWithFilter: (Long, Long, String) -> Unit
+) {
+    val tabs = listOf(
+        "cash" to "Cash Flow",
+        "categories" to "Categories",
+        "methods" to "Payment Methods"
+    )
+
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Column {
+            Text("Analytics", color = ColorText1, fontSize = 18.sp, fontWeight = FontWeight.ExtraBold)
+            Text("Your spending, grouped clearly.", color = ColorText3, fontSize = 12.sp)
+        }
+
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(ColorBg2, RoundedCornerShape(18.dp))
+                .border(1.dp, ColorBg3, RoundedCornerShape(18.dp))
+                .padding(4.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            tabs.forEach { (key, label) ->
+                val selected = selectedTab == key
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(if (selected) ColorOrange else Color.Transparent)
+                        .clickable { onTabChange(key) }
+                        .padding(vertical = 10.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = label,
+                        color = if (selected) Color.White else ColorText2,
+                        fontSize = 12.sp,
+                        fontWeight = if (selected) FontWeight.Bold else FontWeight.SemiBold,
+                        maxLines = 1
+                    )
+                }
+            }
+        }
+
+        AnimatedContent(
+            targetState = selectedTab,
+            transitionSpec = {
+                (fadeIn(animationSpec = tween(180)) + slideInVertically(animationSpec = tween(220)) { it / 20 }) togetherWith
+                    fadeOut(animationSpec = tween(140))
+            },
+            label = "analyticsTabs"
+        ) { tab ->
+            when (tab) {
+                "categories" -> SpendingByCategoryCard(
+                    transactions = transactions,
+                    periodType = periodType,
+                    onPeriodChange = onChartTypeChange
+                )
+                "methods" -> com.autoexpense.app.finance.PaymentMethodDistributionCard()
+                else -> ChartCard(
+                    chartData = chartData,
+                    chartType = chartType,
+                    onTypeChange = onChartTypeChange,
+                    transactions = transactions,
+                    onNavigateToReceiptsWithFilter = onNavigateToReceiptsWithFilter
+                )
+            }
+        }
+    }
+}
+
 @Composable
 fun ChartCard(
     chartData: CashFlowChartData,
@@ -1674,7 +1825,7 @@ fun ChartCard(
                                 )
                                 Spacer(modifier = Modifier.width(3.dp))
                                 Icon(
-                                    imageVector = Icons.Default.KeyboardArrowRight,
+                                    imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
                                     contentDescription = "View transactions",
                                     tint = ColorOrange,
                                     modifier = Modifier.size(14.dp)
@@ -2322,7 +2473,12 @@ fun TransactionTable(
                                     .background(sourceColor, CircleShape)
                             )
                             Spacer(modifier = Modifier.width(4.dp))
-                            Text(t.source.uppercase(), fontSize = 10.sp, color = ColorText2, fontWeight = FontWeight.Bold)
+                            Text(
+                                "${t.source.uppercase()} - ${PaymentMethod.labelFor(t.paymentMethod)}",
+                                fontSize = 10.sp,
+                                color = ColorText2,
+                                fontWeight = FontWeight.Bold
+                            )
                         }
                     }
 
@@ -2423,6 +2579,26 @@ fun TransactionDetailsSheet(
                 }
             }
 
+            // Payment Method
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 6.dp)) {
+                Icon(Icons.Default.Payment, contentDescription = null, tint = ColorOrange, modifier = Modifier.size(20.dp))
+                Spacer(modifier = Modifier.width(12.dp))
+                Column {
+                    Text("Payment Method", fontSize = 11.sp, color = ColorText3)
+                    Text(PaymentMethod.labelFor(transaction.paymentMethod), fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = ColorText1)
+                }
+            }
+
+            // Status
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 6.dp)) {
+                Icon(Icons.Default.Verified, contentDescription = null, tint = ColorOrange, modifier = Modifier.size(20.dp))
+                Spacer(modifier = Modifier.width(12.dp))
+                Column {
+                    Text("Status", fontSize = 11.sp, color = ColorText3)
+                    Text(transaction.status.replaceFirstChar { it.titlecase(java.util.Locale.US) }, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = ColorText1)
+                }
+            }
+
             // Date & Time
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 6.dp)) {
                 Icon(Icons.Default.DateRange, contentDescription = null, tint = ColorOrange, modifier = Modifier.size(20.dp))
@@ -2430,6 +2606,16 @@ fun TransactionDetailsSheet(
                 Column {
                     Text("Date & Time", fontSize = 11.sp, color = ColorText3)
                     Text(transaction.date, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = ColorText1)
+                }
+            }
+
+            // Reference
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 6.dp)) {
+                Icon(Icons.Default.Tag, contentDescription = null, tint = ColorOrange, modifier = Modifier.size(20.dp))
+                Spacer(modifier = Modifier.width(12.dp))
+                Column {
+                    Text("Reference Number", fontSize = 11.sp, color = ColorText3)
+                    Text(transaction.referenceNumber.ifBlank { "Not available" }, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = if (transaction.referenceNumber.isBlank()) ColorText3 else ColorText1)
                 }
             }
 
@@ -2607,9 +2793,10 @@ fun TransactionEditSheet(
 fun ReceiptsFilterSheet(
     filterSettings: ReceiptsFilterSettings,
     dynamicSources: List<String>,
+    dynamicPaymentMethods: List<String>,
     onClose: () -> Unit,
     onReset: () -> Unit,
-    onApply: (DateFilter?, CategoryFilterOption, String?, Double?, Double?) -> Unit
+    onApply: (DateFilter?, CategoryFilterOption, String?, String?, Double?, Double?) -> Unit
 ) {
     var selectedDateOption by remember { mutableStateOf(filterSettings.dateFilter?.label ?: "All time") }
     var customStartMs by remember { mutableStateOf(filterSettings.dateFilter?.startMs ?: System.currentTimeMillis()) }
@@ -2617,6 +2804,7 @@ fun ReceiptsFilterSheet(
 
     var selectedCategoryOption by remember { mutableStateOf(filterSettings.categoryFilter) }
     var selectedSourceOption by remember { mutableStateOf(filterSettings.sourceFilter ?: "All sources") }
+    var selectedMethodOption by remember { mutableStateOf(filterSettings.paymentMethodFilter ?: "All methods") }
     var minAmountText by remember { mutableStateOf(filterSettings.minAmount?.let { if (it == it.toLong().toDouble()) it.toLong().toString() else it.toString() } ?: "") }
     var maxAmountText by remember { mutableStateOf(filterSettings.maxAmount?.let { if (it == it.toLong().toDouble()) it.toLong().toString() else it.toString() } ?: "") }
 
@@ -2627,6 +2815,7 @@ fun ReceiptsFilterSheet(
         CategoryFilterOption.USER_CREATED to "User-created categories"
     )
     val sourceOptions = listOf("All sources") + dynamicSources
+    val methodOptions = listOf("All methods") + dynamicPaymentMethods
 
     ModalBottomSheet(
         onDismissRequest = onClose,
@@ -2737,6 +2926,34 @@ fun ReceiptsFilterSheet(
                 }
             }
 
+            Spacer(modifier = Modifier.height(22.dp))
+            Text("Payment Method", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = ColorText1)
+            Spacer(modifier = Modifier.height(8.dp))
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                methodOptions.forEach { method ->
+                    val isSelected = selectedMethodOption.equals(method, ignoreCase = true)
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(if (isSelected) ColorOrange else ColorBg2)
+                            .border(1.dp, if (isSelected) ColorOrange else ColorBg3, RoundedCornerShape(16.dp))
+                            .clickable { selectedMethodOption = method }
+                            .padding(horizontal = 12.dp, vertical = 6.dp)
+                    ) {
+                        Text(
+                            if (method == "All methods") method else PaymentMethod.labelFor(method),
+                            fontSize = 12.sp,
+                            color = if (isSelected) Color.White else ColorText2,
+                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                        )
+                    }
+                }
+            }
+
             Spacer(modifier = Modifier.height(16.dp))
             // Amount range section
             Text("Amount Range (₹)", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = ColorText1)
@@ -2809,10 +3026,12 @@ fun ReceiptsFilterSheet(
                             else -> DateFilter(customStartMs, customEndMs, "Custom range")
                         }
                         val finalSource = if (selectedSourceOption.equals("All sources", ignoreCase = true)) null else selectedSourceOption
+                        val finalMethod = if (selectedMethodOption.equals("All methods", ignoreCase = true)) null else selectedMethodOption
                         onApply(
                             newDateFilter,
                             selectedCategoryOption,
                             finalSource,
+                            finalMethod,
                             minAmountText.toDoubleOrNull(),
                             maxAmountText.toDoubleOrNull()
                         )
@@ -2893,6 +3112,7 @@ fun ReceiptsLedgerScreen(
     val confirmedTxns by viewModel.confirmedTransactions.collectAsState()
     val filterSettings by viewModel.filterSettings.collectAsState()
     val dynamicSources by viewModel.dynamicSources.collectAsState()
+    val dynamicPaymentMethods by viewModel.dynamicPaymentMethods.collectAsState()
 
     val customCategories by com.autoexpense.app.data.CustomCategoryRepository.customCategories.collectAsState(initial = emptyList())
     val baseCategories = listOf(
@@ -2932,7 +3152,7 @@ fun ReceiptsLedgerScreen(
             Column {
                 Text("Receipts Ledger", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = ColorText1)
                 Text(
-                    "All your confirmed UPI transactions in one place.",
+                    "Search, filter, and review confirmed transactions.",
                     fontSize = 12.sp,
                     color = ColorText2,
                     modifier = Modifier.padding(bottom = 12.dp)
@@ -2963,7 +3183,7 @@ fun ReceiptsLedgerScreen(
             OutlinedTextField(
                 value = filterSettings.searchQuery,
                 onValueChange = { viewModel.setSearchQuery(it) },
-                placeholder = { Text("Search merchant, category, or note...", fontSize = 13.sp, color = ColorText3) },
+                placeholder = { Text("Search merchant, amount, category, method...", fontSize = 13.sp, color = ColorText3) },
                 leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = ColorText3, modifier = Modifier.size(18.dp)) },
                 trailingIcon = if (filterSettings.searchQuery.isNotEmpty()) {
                     {
@@ -3031,9 +3251,48 @@ fun ReceiptsLedgerScreen(
                 contentPadding = PaddingValues(horizontal = 12.dp, vertical = 12.dp),
                 modifier = Modifier.height(52.dp)
             ) {
-                Icon(Icons.Default.Sort, contentDescription = "Sort", modifier = Modifier.size(18.dp))
+                Icon(Icons.AutoMirrored.Filled.Sort, contentDescription = "Sort", modifier = Modifier.size(18.dp))
                 Spacer(modifier = Modifier.width(4.dp))
                 Text("Sort", fontSize = 13.sp)
+            }
+        }
+
+        LazyRow(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(bottom = 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            item {
+                QuickFilterChip(
+                    label = "All",
+                    selected = !filterSettings.hasActiveSearchOrFilters(),
+                    onClick = { viewModel.clearAll() }
+                )
+            }
+            listOf(
+                PaymentMethod.UPI,
+                PaymentMethod.DEBIT_CARD,
+                PaymentMethod.CREDIT_CARD,
+                PaymentMethod.WALLET,
+                PaymentMethod.NET_BANKING
+            ).forEach { method ->
+                item {
+                    QuickFilterChip(
+                        label = method.label,
+                        selected = filterSettings.paymentMethodFilter == method.name,
+                        onClick = { viewModel.setPaymentMethodFilter(method.name) }
+                    )
+                }
+            }
+            listOf("Bills", "Subscriptions", "Shopping", "Food", "Travel", "Entertainment").forEach { label ->
+                item {
+                    QuickFilterChip(
+                        label = label,
+                        selected = filterSettings.searchQuery.equals(label, ignoreCase = true),
+                        onClick = { viewModel.setSearchQuery(label) }
+                    )
+                }
             }
         }
 
@@ -3109,6 +3368,28 @@ fun ReceiptsLedgerScreen(
                                 modifier = Modifier
                                     .size(14.dp)
                                     .clickable { viewModel.clearSourceFilter() }
+                            )
+                        }
+                    }
+                }
+                if (!filterSettings.paymentMethodFilter.isNullOrEmpty()) {
+                    item {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(ColorOrange.copy(alpha = 0.15f))
+                                .padding(horizontal = 10.dp, vertical = 6.dp)
+                        ) {
+                            Text("Method: ${PaymentMethod.labelFor(filterSettings.paymentMethodFilter)}", fontSize = 11.sp, color = ColorOrange, fontWeight = FontWeight.SemiBold)
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Icon(
+                                Icons.Default.Close,
+                                contentDescription = "Clear payment method filter",
+                                tint = ColorOrange,
+                                modifier = Modifier
+                                    .size(14.dp)
+                                    .clickable { viewModel.clearPaymentMethodFilter() }
                             )
                         }
                     }
@@ -3353,17 +3634,19 @@ fun ReceiptsLedgerScreen(
         ReceiptsFilterSheet(
             filterSettings = filterSettings,
             dynamicSources = dynamicSources,
+            dynamicPaymentMethods = dynamicPaymentMethods,
             onClose = { showFilterSheet = false },
             onReset = {
                 AppHaptic.trigger(context)
                 viewModel.resetFilters()
                 showFilterSheet = false
             },
-            onApply = { df, catOpt, srcOpt, minAmt, maxAmt ->
+            onApply = { df, catOpt, srcOpt, methodOpt, minAmt, maxAmt ->
                 AppHaptic.trigger(context)
                 if (df != null) viewModel.setDateFilter(df.startMs, df.endMs, df.label) else viewModel.clearDateFilter()
                 viewModel.setCategoryFilter(catOpt)
                 viewModel.setSourceFilter(srcOpt)
+                viewModel.setPaymentMethodFilter(methodOpt)
                 viewModel.setAmountRange(minAmt, maxAmt)
                 showFilterSheet = false
             }
@@ -3383,6 +3666,29 @@ fun ReceiptsLedgerScreen(
 }
 
 // ── NEEDS REVIEW SCREEN ──────────────────────────────────────────────────
+@Composable
+fun QuickFilterChip(
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(18.dp))
+            .background(if (selected) ColorOrange else ColorBg2)
+            .border(1.dp, if (selected) ColorOrange else ColorBg3, RoundedCornerShape(18.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 9.dp)
+    ) {
+        Text(
+            text = label,
+            color = if (selected) Color.White else ColorText2,
+            fontSize = 12.sp,
+            fontWeight = if (selected) FontWeight.Bold else FontWeight.SemiBold
+        )
+    }
+}
+
 @Composable
 fun NeedsReviewScreen(
     viewModel: ReviewViewModel,
@@ -3484,7 +3790,7 @@ fun NeedsReviewScreen(
                                         scope.launch {
                                             delay(1200)
                                             thinkingForCardId = ""
-                                            val lv = t.merchant.toLowerCase()
+                                            val lv = t.merchant.lowercase()
                                             currentSuggestionId = when {
                                                 lv.contains("rahul") -> "rc1_food"
                                                 lv.contains("unknown") -> "rc2_grocery"
@@ -3789,14 +4095,14 @@ fun ReviewCard(
                         val iconVector = when {
                             txn.notificationExcerpt.isNotEmpty() -> Icons.Outlined.Notifications
                             txn.merchant.contains("Rahul") || txn.merchant.contains("Priya") -> Icons.Outlined.Person
-                            else -> Icons.Outlined.HelpOutline
+                            else -> Icons.AutoMirrored.Outlined.HelpOutline
                         }
                         Icon(iconVector, contentDescription = null, tint = ColorText1, modifier = Modifier.size(18.dp))
                     }
                     Spacer(modifier = Modifier.width(8.dp))
                     Column {
                         Text(txn.merchant, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = ColorText1)
-                        Text("${txn.source.uppercase()} · ${txn.date}", fontSize = 11.sp, color = ColorText3)
+                        Text("${txn.source.uppercase()} - ${PaymentMethod.labelFor(txn.paymentMethod)} - ${txn.date}", fontSize = 11.sp, color = ColorText3)
                     }
                 }
                 Text(txn.amount, fontSize = 16.sp, fontWeight = FontWeight.Bold, color = ColorAmber)
@@ -4439,7 +4745,7 @@ fun ProfileScreen(
                             color = ColorOrange,
                             modifier = Modifier.weight(1f)
                         )
-                        Icon(Icons.Outlined.ArrowForwardIos, contentDescription = null, tint = ColorOrange, modifier = Modifier.size(12.dp))
+                        Icon(Icons.AutoMirrored.Outlined.ArrowForwardIos, contentDescription = null, tint = ColorOrange, modifier = Modifier.size(12.dp))
                     }
                 }
             }

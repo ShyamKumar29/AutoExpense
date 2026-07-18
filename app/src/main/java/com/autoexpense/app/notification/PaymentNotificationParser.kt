@@ -269,7 +269,8 @@ object PaymentNotificationParser {
             timestamp = timestamp,
             safeNotificationExcerpt = maskedExcerpt(fullText),
             confidence = confidence,
-            detectionReason = "Outgoing payment phrase detected: \"$matchedPhrase\""
+            detectionReason = "Outgoing payment phrase detected: \"$matchedPhrase\"",
+            paymentMethod = PaymentMethodDetector.detect("", fullText, packageName)
         )
     }
 
@@ -312,7 +313,8 @@ object PaymentNotificationParser {
             safeNotificationExcerpt = maskedExcerpt(fullText),
             confidence = confidence,
             detectionReason = "Outgoing bank debit notification detected",
-            bankRefNumber = bankRef
+            bankRefNumber = bankRef,
+            paymentMethod = PaymentMethodDetector.detect("", fullText, packageName)
         )
     }
 
