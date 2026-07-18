@@ -11,6 +11,9 @@ interface RecurringPaymentDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertAll(items: List<RecurringPaymentEntity>)
 
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsert(item: RecurringPaymentEntity)
+
     @Query("SELECT * FROM recurring_payments ORDER BY nextExpectedAt ASC")
     fun observeAll(): Flow<List<RecurringPaymentEntity>>
 
@@ -19,6 +22,9 @@ interface RecurringPaymentDao {
 
     @Query("UPDATE recurring_payments SET status = :status, updatedAt = :updatedAt WHERE id = :id")
     suspend fun updateStatus(id: String, status: String, updatedAt: Long = System.currentTimeMillis())
+
+    @Query("DELETE FROM recurring_payments WHERE id = :id")
+    suspend fun deleteById(id: String)
 
     @Query("DELETE FROM recurring_payments")
     suspend fun deleteAll()

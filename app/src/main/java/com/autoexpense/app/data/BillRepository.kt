@@ -19,12 +19,20 @@ object BillRepository {
 
     suspend fun insertIfNew(bill: BillEntity): Boolean = dao.insertIgnore(bill) != -1L
 
+    suspend fun upsert(bill: BillEntity) {
+        dao.upsert(bill)
+    }
+
     suspend fun markPaid(billId: String, transactionId: String? = null, paidAt: Long = System.currentTimeMillis()) {
         dao.markPaid(billId, transactionId, paidAt)
     }
 
     suspend fun dismiss(billId: String) {
         dao.dismiss(billId)
+    }
+
+    suspend fun delete(billId: String) {
+        dao.deleteById(billId)
     }
 
     suspend fun markMatchingPaymentPaid(

@@ -11,6 +11,9 @@ interface BillDao {
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertIgnore(bill: BillEntity): Long
 
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsert(bill: BillEntity): Long
+
     @Query("SELECT * FROM bills ORDER BY COALESCE(dueDate, generatedAt) ASC")
     fun observeAll(): Flow<List<BillEntity>>
 
@@ -25,6 +28,9 @@ interface BillDao {
 
     @Query("UPDATE bills SET status = 'DISMISSED', updatedAt = :updatedAt WHERE id = :billId")
     suspend fun dismiss(billId: String, updatedAt: Long = System.currentTimeMillis())
+
+    @Query("DELETE FROM bills WHERE id = :billId")
+    suspend fun deleteById(billId: String)
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertAll(bills: List<BillEntity>)

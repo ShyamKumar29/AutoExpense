@@ -21,7 +21,15 @@ object RecurringPaymentRepository {
         if (items.isNotEmpty()) dao.upsertAll(items)
     }
 
+    suspend fun upsert(item: RecurringPaymentEntity) {
+        dao.upsert(item)
+    }
+
     suspend fun updateStatus(id: String, status: String) {
         dao.updateStatus(id, status)
+    }
+
+    suspend fun delete(id: String) {
+        dao.deleteById(id)
     }
 }
