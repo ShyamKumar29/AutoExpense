@@ -7,6 +7,7 @@ import android.provider.Telephony
 import android.util.Log
 import androidx.core.content.ContextCompat
 import com.autoexpense.app.BuildConfig
+import com.autoexpense.app.domain.TransactionType
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.security.MessageDigest
@@ -156,6 +157,13 @@ object SmsPaymentScanner {
             return false
         }
 
+        if (origin == "inbox_scan" && payment.transactionType.isCreditLike()) {
+            if (BuildConfig.DEBUG) {
+                Log.d(TAG, "sms skipped historical_credit origin=$origin sourceId=$sourceId type=${payment.transactionType}")
+            }
+            return false
+        }
+
         return PaymentIngestion.ingestParsedPayment(
             payment = payment,
             context = context,
@@ -224,5 +232,12 @@ object SmsPaymentScanner {
     private fun sha256(value: String): String {
         val digest = MessageDigest.getInstance("SHA-256").digest(value.toByteArray(Charsets.UTF_8))
         return digest.joinToString(separator = "") { "%02x".format(it) }
+    }
+
+    private fun TransactionType.isCreditLike(): Boolean {
+        return this == TransactionType.INCOME ||
+            this == TransactionType.REFUND ||
+            this == TransactionType.CASHBACK ||
+            this == TransactionType.INTEREST
     }
 }

@@ -262,6 +262,7 @@ object TransactionRepository {
                 com.autoexpense.app.data.MerchantCategoryRepository.saveMapping(target.merchant, category)
             }
             dao.confirmTransaction(id, category)
+            syncFinancialTransaction(id)
             onComplete?.invoke()
         }
     }
@@ -280,6 +281,7 @@ object TransactionRepository {
                 com.autoexpense.app.data.MerchantCategoryRepository.saveMapping(merchantName, category)
             }
             dao.updateTransactionDetails(id, merchantName, category, note)
+            syncFinancialTransaction(id)
             onComplete?.invoke()
         }
     }
@@ -287,6 +289,7 @@ object TransactionRepository {
     fun deleteTransaction(id: String, onComplete: (() -> Unit)? = null) {
         coroutineScope.launch {
             dao.deleteTransactionById(id)
+            runCatching { com.autoexpense.app.domain.FinancialTransactionRepository.delete(id) }
             onComplete?.invoke()
         }
     }
@@ -294,6 +297,7 @@ object TransactionRepository {
     fun ignoreTransaction(id: String) {
         coroutineScope.launch {
             dao.ignoreTransaction(id)
+            syncFinancialTransaction(id)
         }
     }
 
@@ -319,9 +323,18 @@ object TransactionRepository {
                     val cat = suggestions[it.id] ?: "Personal Transfer"
                     com.autoexpense.app.data.MerchantCategoryRepository.saveMapping(it.merchant, cat)
                     dao.confirmTransaction(it.id, cat)
+                    syncFinancialTransaction(it.id)
                 }
             }
             onComplete?.invoke()
+        }
+    }
+
+    private suspend fun syncFinancialTransaction(id: String) {
+        val entity = dao.getTransactionById(id) ?: return
+        val domain = com.autoexpense.app.domain.FinancialTransactionMapper.fromEntity(entity)
+        runCatching {
+            com.autoexpense.app.domain.FinancialTransactionRepository.update(domain)
         }
     }
 }
@@ -345,7 +358,9 @@ data class UpiSourcesData(
 )
 
 class DashboardViewModel : ViewModel() {
-    val transactions: StateFlow<List<Transaction>> = TransactionRepository.transactions
+    val transactions: StateFlow<List<Transaction>> = com.autoexpense.app.domain.FinancialTransactionRepository
+        .observeUiTransactions()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     companion object {
         fun isConfirmedOutgoingExpense(t: Transaction): Boolean {
@@ -730,7 +745,7 @@ class ReceiptsViewModel : ViewModel() {
     }
 
     val confirmedTransactions: StateFlow<List<Transaction>> = combine(
-        TransactionRepository.transactions,
+        com.autoexpense.app.domain.FinancialTransactionRepository.observeUiTransactions(),
         com.autoexpense.app.data.CustomCategoryRepository.customCategories,
         _filterSettings
     ) { allTxns, customCats, settings ->
@@ -738,7 +753,7 @@ class ReceiptsViewModel : ViewModel() {
         filterAndSortTransactions(confirmed, customCats, settings)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    val dynamicSources: StateFlow<List<String>> = TransactionRepository.transactions.map { list ->
+    val dynamicSources: StateFlow<List<String>> = com.autoexpense.app.domain.FinancialTransactionRepository.observeUiTransactions().map { list ->
         list.filter { it.status.equals("confirmed", ignoreCase = true) }
             .map { it.source.trim() }
             .filter { it.isNotEmpty() }
@@ -746,7 +761,7 @@ class ReceiptsViewModel : ViewModel() {
             .sorted()
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    val dynamicPaymentMethods: StateFlow<List<String>> = TransactionRepository.transactions.map { list ->
+    val dynamicPaymentMethods: StateFlow<List<String>> = com.autoexpense.app.domain.FinancialTransactionRepository.observeUiTransactions().map { list ->
         list.filter { it.status.equals("confirmed", ignoreCase = true) }
             .map { it.paymentMethod.trim() }
             .filter { it.isNotEmpty() && !it.equals(PaymentMethod.UNKNOWN.name, ignoreCase = true) }
@@ -866,12 +881,19 @@ class ReviewViewModel : ViewModel() {
     }
 
     fun approveAll(onComplete: (() -> Unit)? = null) {
-        val suggestions = mapOf(
-            "TXN004" to "Personal Transfer",
-            "TXN007" to "Groceries",
-            "TXN009" to "Personal Transfer"
-        )
+        val suggestions = pendingTransactions.value.associate { transaction ->
+            transaction.id to suggestCategory(transaction).name
+        }
         TransactionRepository.approveAll(suggestions, onComplete)
+    }
+
+    fun categoriesFor(transaction: Transaction): List<com.autoexpense.app.domain.TransactionCategory> {
+        return com.autoexpense.app.domain.DefaultCategoryProvider.categoriesFor(transaction)
+    }
+
+    fun suggestCategory(transaction: Transaction): com.autoexpense.app.domain.TransactionCategory {
+        return com.autoexpense.app.domain.DefaultCategoryProvider.suggestCategory(transaction)
+            ?: categoriesFor(transaction).first()
     }
 }
 
@@ -1425,10 +1447,37 @@ fun RenderDashboardWidget(
 
 @Composable
 private fun DashboardFinancialSummaryHero(state: DashboardRenderState) {
-    val trendText = remember(state.expenseMetric.supportingText) {
-        state.expenseMetric.supportingText.ifBlank { "0.0% vs last month" }
+    val overview = remember(state.summary.monthlyIncome, state.summary.monthlyExpense) {
+        val income = state.summary.monthlyIncome
+        val expenses = state.summary.monthlyExpense
+        val difference = kotlin.math.abs(income - expenses)
+        when {
+            income > expenses -> FinancialOverviewPresentation(
+                title = "Net Savings",
+                amount = com.autoexpense.app.domain.CashFlowService.formatCompactIndianCurrency(difference),
+                subtitle = "You saved ${com.autoexpense.app.domain.CashFlowService.formatCompactIndianCurrency(difference)} this month.",
+                trendText = "Saved this month",
+                trendIcon = Icons.Default.ArrowUpward,
+                accent = ColorGreen
+            )
+            expenses > income -> FinancialOverviewPresentation(
+                title = "Overspent",
+                amount = com.autoexpense.app.domain.CashFlowService.formatCompactIndianCurrency(difference),
+                subtitle = "You spent ${com.autoexpense.app.domain.CashFlowService.formatCompactIndianCurrency(difference)} more than you earned this month.",
+                trendText = "Overspent this month",
+                trendIcon = Icons.Default.ArrowDownward,
+                accent = ColorRed
+            )
+            else -> FinancialOverviewPresentation(
+                title = "Balanced",
+                amount = com.autoexpense.app.domain.CashFlowService.formatCompactIndianCurrency(0.0),
+                subtitle = "Income and expenses are equal.",
+                trendText = "Balanced",
+                trendIcon = Icons.Default.Remove,
+                accent = ColorText2
+            )
+        }
     }
-    val trendPositive = !trendText.trim().startsWith("+")
 
     Card(
         colors = CardDefaults.cardColors(containerColor = Color.Transparent),
@@ -1466,22 +1515,32 @@ private fun DashboardFinancialSummaryHero(state: DashboardRenderState) {
                         )
                         Spacer(modifier = Modifier.height(8.dp))
                         AnimatedAmountText(
-                            targetFormatted = state.savingsMetric.value,
+                            targetFormatted = overview.amount,
                             fontSize = 34.sp,
                             fontWeight = FontWeight.ExtraBold,
-                            color = Color.White
+                            color = overview.accent
                         )
                         Text(
-                            "Net savings this month",
+                            overview.title,
                             color = Color.White.copy(alpha = 0.68f),
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Medium
                         )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            overview.subtitle,
+                            color = Color.White.copy(alpha = 0.78f),
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
                     }
                     Spacer(modifier = Modifier.width(12.dp))
                     DashboardTrendPill(
-                        text = trendText,
-                        positive = trendPositive
+                        text = overview.trendText,
+                        tint = overview.accent,
+                        icon = overview.trendIcon
                     )
                 }
 
@@ -1502,12 +1561,21 @@ private fun DashboardFinancialSummaryHero(state: DashboardRenderState) {
     }
 }
 
+private data class FinancialOverviewPresentation(
+    val title: String,
+    val amount: String,
+    val subtitle: String,
+    val trendText: String,
+    val trendIcon: ImageVector,
+    val accent: Color
+)
+
 @Composable
 private fun DashboardTrendPill(
     text: String,
-    positive: Boolean
+    tint: Color,
+    icon: ImageVector
 ) {
-    val tint = if (positive) ColorGreen else ColorAmber
     Surface(
         color = tint.copy(alpha = 0.16f),
         shape = RoundedCornerShape(999.dp),
@@ -1518,7 +1586,7 @@ private fun DashboardTrendPill(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Icon(
-                imageVector = if (positive) Icons.Default.ArrowDownward else Icons.Default.ArrowUpward,
+                imageVector = icon,
                 contentDescription = null,
                 tint = tint,
                 modifier = Modifier.size(14.dp)
@@ -3895,7 +3963,24 @@ fun TransactionTable(
                         modifier = Modifier.weight(1.2f),
                         horizontalAlignment = Alignment.End
                     ) {
-                        Text(t.amount, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = ColorText1)
+                        val amountPresentation = remember(t.amount, t.category, t.merchant, t.status, t.notificationExcerpt, t.detectionReason) {
+                            transactionAmountPresentation(t)
+                        }
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = amountPresentation.icon,
+                                contentDescription = null,
+                                tint = amountPresentation.color,
+                                modifier = Modifier.size(13.dp)
+                            )
+                            Spacer(modifier = Modifier.width(3.dp))
+                            Text(
+                                amountPresentation.text,
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = amountPresentation.color
+                            )
+                        }
                         Text(t.date, fontSize = 10.sp, color = ColorText3)
                     }
                 }
@@ -3905,6 +3990,36 @@ fun TransactionTable(
 }
 
 // ── TRANSACTION DETAILS & CORRECTION COMPONENTS ────────────────────────────
+private data class TransactionAmountPresentation(
+    val text: String,
+    val color: Color,
+    val icon: ImageVector
+)
+
+private fun transactionAmountPresentation(transaction: Transaction): TransactionAmountPresentation {
+    val type = com.autoexpense.app.domain.TransactionClassificationService.classify(transaction)
+    val isIncomeLike = type == com.autoexpense.app.domain.TransactionType.INCOME ||
+        type == com.autoexpense.app.domain.TransactionType.REFUND ||
+        type == com.autoexpense.app.domain.TransactionType.CASHBACK ||
+        type == com.autoexpense.app.domain.TransactionType.INTEREST ||
+        transaction.amount.trim().startsWith("+")
+    val amount = DashboardViewModel.parseAmount(transaction.amount)
+    val formatted = com.autoexpense.app.domain.CashFlowService.formatCompactIndianCurrency(amount)
+    return if (isIncomeLike) {
+        TransactionAmountPresentation(
+            text = "+$formatted",
+            color = ColorGreen,
+            icon = Icons.Default.ArrowUpward
+        )
+    } else {
+        TransactionAmountPresentation(
+            text = formatted,
+            color = ColorRed,
+            icon = Icons.Default.ArrowDownward
+        )
+    }
+}
+
 @Composable
 fun TransactionDetailsSheet(
     transaction: Transaction,
@@ -3937,7 +4052,17 @@ fun TransactionDetailsSheet(
             Text(transaction.merchant, fontSize = 22.sp, fontWeight = FontWeight.ExtraBold, color = ColorText1)
             Spacer(modifier = Modifier.height(8.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(transaction.amount, fontSize = 26.sp, fontWeight = FontWeight.Black, color = ColorOrange)
+                val amountPresentation = remember(transaction.amount, transaction.category, transaction.merchant, transaction.status, transaction.notificationExcerpt, transaction.detectionReason) {
+                    transactionAmountPresentation(transaction)
+                }
+                Icon(
+                    imageVector = amountPresentation.icon,
+                    contentDescription = null,
+                    tint = amountPresentation.color,
+                    modifier = Modifier.size(22.dp)
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(amountPresentation.text, fontSize = 26.sp, fontWeight = FontWeight.Black, color = amountPresentation.color)
                 Spacer(modifier = Modifier.width(12.dp))
                 Card(
                     colors = CardDefaults.cardColors(containerColor = ColorBg2),
@@ -5112,22 +5237,18 @@ fun NeedsReviewScreen(
                     ) {
                         visibleReviewTxns.forEach { t ->
                             key(t.id) {
+                                val categoryOptions = remember(t) { viewModel.categoriesFor(t) }
                                 ReviewCard(
                                     txn = t,
                                     isThinking = thinkingForCardId == t.id,
                                     suggestedChipId = currentSuggestionId,
+                                    categoryOptions = categoryOptions,
                                     onAiSuggest = {
                                         thinkingForCardId = t.id
                                         scope.launch {
                                             delay(1200)
                                             thinkingForCardId = ""
-                                            val lv = t.merchant.lowercase()
-                                            currentSuggestionId = when {
-                                                lv.contains("rahul") -> "rc1_food"
-                                                lv.contains("unknown") -> "rc2_grocery"
-                                                lv.contains("priya") -> "rc3_personal"
-                                                else -> ""
-                                            }
+                                            currentSuggestionId = viewModel.suggestCategory(t).id
                                         }
                                     },
                                     onConfirm = { selectedCat ->
@@ -5396,6 +5517,7 @@ fun ReviewCard(
     txn: Transaction,
     isThinking: Boolean,
     suggestedChipId: String,
+    categoryOptions: List<com.autoexpense.app.domain.TransactionCategory>,
     onAiSuggest: () -> Unit,
     onConfirm: (String) -> Unit,
     onIgnore: () -> Unit
@@ -5515,40 +5637,17 @@ fun ReviewCard(
             Spacer(modifier = Modifier.height(12.dp))
 
             // Categories Chips
-            val customCategories by com.autoexpense.app.data.CustomCategoryRepository.customCategories.collectAsState(
-                initial = emptyList()
-            )
-            val baseChips = when {
-                txn.merchant.contains("Rahul") -> listOf(
-                    "Food & Dining" to "rc1_food",
-                    "Entertainment" to "rc1_ent",
-                    "Rent / Bills" to "rc1_rent",
-                    "Personal Transfer" to "rc1_personal"
-                )
-                txn.merchant.contains("Unknown") -> listOf(
-                    "Groceries" to "rc2_grocery",
-                    "Food & Dining" to "rc2_food",
-                    "Healthcare" to "rc2_health",
-                    "Transport" to "rc2_trans"
-                )
-                else -> listOf(
-                    "Travel" to "rc3_travel",
-                    "Food & Dining" to "rc3_food",
-                    "Personal Transfer" to "rc3_personal"
-                )
+            val rawChips = categoryOptions.map { it.name to it.id }
+            val typedRememberedCategory = rememberedCategory?.takeIf { remembered ->
+                categoryOptions.any { it.name.equals(remembered, ignoreCase = true) }
             }
-            val rawChips = baseChips + customCategories.map { it.name to "custom_${it.id}" }
-            val chips = if (rememberedCategory != null && rawChips.none { it.first.equals(rememberedCategory, ignoreCase = true) }) {
-                listOf(rememberedCategory to "remembered") + rawChips
-            } else {
-                rawChips
-            }
+            val chips = rawChips
 
             // Pre-select remembered category, or AI suggestion if ready
-            LaunchedEffect(rememberedCategory, suggestedChipId) {
+            LaunchedEffect(typedRememberedCategory, suggestedChipId) {
                 if (!userManuallySelectedCategory) {
-                    if (rememberedCategory != null) {
-                        selectedCategory = rememberedCategory
+                    if (typedRememberedCategory != null) {
+                        selectedCategory = typedRememberedCategory
                     } else if (selectedCategory.isEmpty()) {
                         val matchingChip = chips.find { it.second == suggestedChipId }
                         if (matchingChip != null) {
@@ -5617,9 +5716,9 @@ fun ReviewCard(
                 }
             }
 
-            val showRememberedIndicator = rememberedCategory != null &&
+            val showRememberedIndicator = typedRememberedCategory != null &&
                 !userManuallySelectedCategory &&
-                selectedCategory == rememberedCategory &&
+                selectedCategory == typedRememberedCategory &&
                 !com.autoexpense.app.data.MerchantCategoryRepository.isUnknownMerchant(txn.merchant) &&
                 !com.autoexpense.app.data.MerchantCategoryRepository.isUnknownMerchant(txn.rawMerchant)
 

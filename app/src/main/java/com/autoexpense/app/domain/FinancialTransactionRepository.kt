@@ -6,7 +6,11 @@ import com.autoexpense.app.Transaction
 import com.autoexpense.app.TransactionRepository
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 /**
  * Domain-facing adapter over the existing repository.
@@ -21,6 +25,19 @@ object FinancialTransactionRepository {
 
     val transactions = TransactionRepository.transactions.map { items ->
         with(FinancialTransactionMapper) { items.toFinancialTransactions() }
+    }
+
+    fun observeUiTransactions(): Flow<List<Transaction>> {
+        return combine(
+            TransactionRepository.transactions,
+            observeAllTransactions()
+        ) { legacyTransactions, financialTransactions ->
+            val financialIds = financialTransactions.map { it.id }.toSet()
+            val financialUi = financialTransactions.map { it.toUiTransaction() }
+            (financialUi + legacyTransactions.filterNot { it.id in financialIds })
+                .distinctBy { it.id }
+                .sortedByDescending { it.timestamp }
+        }
     }
 
     fun init(financialTransactionDao: FinancialTransactionDao) {
@@ -114,5 +131,42 @@ object FinancialTransactionRepository {
 
     private fun requireDao(): FinancialTransactionDao {
         return dao ?: error("FinancialTransactionRepository.init() must be called before using Room-backed APIs")
+    }
+
+    private fun FinancialTransaction.toUiTransaction(): Transaction {
+        val incomeLike = transactionType == TransactionType.INCOME ||
+            transactionType == TransactionType.REFUND ||
+            transactionType == TransactionType.CASHBACK ||
+            transactionType == TransactionType.INTEREST
+        return Transaction(
+            id = id,
+            merchant = merchant.ifBlank { title }.ifBlank { transactionType.name.replace('_', ' ') },
+            sub = subCategory,
+            source = notificationSource.ifBlank { metadata["source"].orEmpty() }.ifBlank { "manual" },
+            category = category,
+            amount = formatUiAmount(amount, incomeLike),
+            date = formatUiDate(date),
+            status = status,
+            notificationExcerpt = metadata["notificationExcerpt"].orEmpty(),
+            detectionReason = metadata["detectionReason"].orEmpty().ifBlank { metadata["classificationReason"].orEmpty() },
+            timestamp = date,
+            note = notes,
+            rawMerchant = metadata["rawMerchant"].orEmpty(),
+            paymentMethod = paymentMethod,
+            referenceNumber = referenceNumber
+        )
+    }
+
+    private fun formatUiAmount(amount: Double, incomeLike: Boolean): String {
+        val sign = if (incomeLike) "+" else "\u2212"
+        return sign + CashFlowService.formatCompactIndianCurrency(amount)
+    }
+
+    private fun formatUiDate(timestamp: Long): String {
+        return if (timestamp > 0L) {
+            SimpleDateFormat("dd MMM", Locale.US).format(Date(timestamp))
+        } else {
+            ""
+        }
     }
 }

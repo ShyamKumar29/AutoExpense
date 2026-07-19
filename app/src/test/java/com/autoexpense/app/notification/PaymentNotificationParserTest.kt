@@ -525,6 +525,46 @@ class PaymentNotificationParserTest {
     }
 
     @Test
+    fun incoming_upi_extracts_sender_name() {
+        val body = "Received Rs. 500 from Harini UPI Ref 619455206612"
+        val r = PaymentNotificationParser.parse("SBI", body, PaymentIngestion.DIRECT_SMS_PACKAGE, ts)
+        assertNotNull(r)
+        assertEquals(500.0, r!!.amount, 0.001)
+        assertEquals("Harini", r.merchantOrRecipient)
+        assertEquals(com.autoexpense.app.domain.TransactionType.INCOME, r.transactionType)
+    }
+
+    @Test
+    fun incoming_transfer_extracts_sender_name() {
+        val body = "Transfer from Harini Rs. 500 Refno 619455206615"
+        val r = PaymentNotificationParser.parse("SBI", body, PaymentIngestion.DIRECT_SMS_PACKAGE, ts)
+        assertNotNull(r)
+        assertEquals(500.0, r!!.amount, 0.001)
+        assertEquals("Harini", r.merchantOrRecipient)
+        assertEquals(com.autoexpense.app.domain.TransactionType.INCOME, r.transactionType)
+    }
+
+    @Test
+    fun salary_credit_extracts_organization_name() {
+        val body = "Salary credited by TCS INR 50000 Refno 619455206613"
+        val r = PaymentNotificationParser.parse("HDFC Bank", body, PaymentIngestion.DIRECT_SMS_PACKAGE, ts)
+        assertNotNull(r)
+        assertEquals(50000.0, r!!.amount, 0.001)
+        assertEquals("TCS", r.merchantOrRecipient)
+        assertEquals(com.autoexpense.app.domain.TransactionType.INCOME, r.transactionType)
+    }
+
+    @Test
+    fun refund_extracts_merchant_name() {
+        val body = "Refund from Amazon Rs. 450 processed UTR 619455206614"
+        val r = PaymentNotificationParser.parse("ICICI Bank", body, PaymentIngestion.DIRECT_SMS_PACKAGE, ts)
+        assertNotNull(r)
+        assertEquals(450.0, r!!.amount, 0.001)
+        assertEquals("Amazon", r.merchantOrRecipient)
+        assertEquals(com.autoexpense.app.domain.TransactionType.REFUND, r.transactionType)
+    }
+
+    @Test
     fun directSms_and_notification_use_same_ref_fingerprint() {
         val body = "A/C X4511 debited by 250.00 trf to BIG BASKET Refno 619455206611 SBI"
         val fromSms = PaymentNotificationParser.parse("SBI", body, PaymentIngestion.DIRECT_SMS_PACKAGE, ts)

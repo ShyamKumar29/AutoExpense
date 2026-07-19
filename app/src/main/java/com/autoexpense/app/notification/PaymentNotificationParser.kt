@@ -157,6 +157,29 @@ object PaymentNotificationParser {
         RegexOption.IGNORE_CASE
     )
 
+    private val INCOMING_COUNTERPARTY_PATTERNS = listOf(
+        Regex(
+            """(?:received|you\s+received)\s+(?:Rs\.?\s*|INR\s*|\u20B9\s*)?[\d,]+(?:\.\d{1,2})?\s+from\s+([A-Za-z0-9][A-Za-z0-9\s.\-_@]{0,49}?)""" +
+                """(?=\s+(?:refno|ref\s*no|reference|utr|upi\s*ref|txn\s*id|transaction\s*id|on\b|via\b|to\b|for\b|rs\.?\b|inr\b)|\s*\u20B9|\s*\d{6,}|\s*$)""",
+            RegexOption.IGNORE_CASE
+        ),
+        Regex(
+            """(?:received\s+from|money\s+received\s+from|amount\s+received\s+from|transfer\s+(?:received\s+)?from|upi\s+(?:received\s+)?from|neft\s+(?:received\s+)?from|imps\s+(?:received\s+)?from|rtgs\s+(?:received\s+)?from)\s+([A-Za-z0-9][A-Za-z0-9\s.\-_@]{0,49}?)""" +
+                """(?=\s+(?:refno|ref\s*no|reference|utr|upi\s*ref|txn\s*id|transaction\s*id|on\b|via\b|to\b|for\b|rs\.?\b|inr\b)|\s*\u20B9|\s*\d{6,}|\s*$)""",
+            RegexOption.IGNORE_CASE
+        ),
+        Regex(
+            """(?:salary\s+credited\s+(?:by|from)|salary\s+deposited\s+(?:by|from)|credited\s+(?:by|from)|amount\s+credited\s+(?:by|from))\s+([A-Za-z0-9][A-Za-z0-9\s.\-_@]{0,49}?)""" +
+                """(?=\s+(?:refno|ref\s*no|reference|utr|upi\s*ref|txn\s*id|transaction\s*id|on\b|via\b|to\b|for\b|rs\.?\b|inr\b)|\s*\u20B9|\s*\d{6,}|\s*$)""",
+            RegexOption.IGNORE_CASE
+        ),
+        Regex(
+            """refund\s+from\s+([A-Za-z0-9][A-Za-z0-9\s.\-_@]{0,49}?)""" +
+                """(?=\s+(?:refno|ref\s*no|reference|utr|upi\s*ref|txn\s*id|transaction\s*id|on\b|via\b|to\b|for\b|rs\.?\b|inr\b)|\s*\u20B9|\s*\d{6,}|\s*$)""",
+            RegexOption.IGNORE_CASE
+        )
+    )
+
     // Bank SMS reference number: "Refno 619473207907" / "UTR 123456"
     private val BANK_REF_NO = Regex(
         """(?:refno|ref\s*no|reference\s*no|utr|upi\s*ref)\s*[:\-]?\s*(\d{6,20})""",
@@ -167,7 +190,7 @@ object PaymentNotificationParser {
     private val ACCOUNT_MASK = Regex("""[Xx]\d{3,6}""")
 
     private val INVALID_MERCHANT_TOKENS = setOf(
-        "your", "a", "the", "my", "his", "her", "its", "our", "you", "upi", "user"
+        "your", "a", "the", "my", "his", "her", "its", "our", "you", "upi", "user", "rs", "rs.", "inr"
     )
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -218,7 +241,8 @@ object PaymentNotificationParser {
         if (amount <= 0.0) return null
         val bank = KnownBanks.detect(fullText)
         val source = SupportedPaymentSources.findSource(packageName)
-        val counterparty = extractMerchantBankSms(fullText)
+        val counterparty = extractIncomingCounterparty(fullText)
+            ?: extractMerchantBankSms(fullText)
             ?: extractMerchant(fullText)
             ?: when (transactionType) {
                 TransactionType.INCOME -> "Income"
@@ -446,6 +470,23 @@ object PaymentNotificationParser {
             if (isValidMerchantName(c)) return c
         }
         return null
+    }
+
+    internal fun extractIncomingCounterparty(text: String): String? {
+        return INCOMING_COUNTERPARTY_PATTERNS.firstNotNullOfOrNull { pattern ->
+            pattern.find(text)?.groupValues?.getOrNull(1)?.let { raw ->
+                cleanupCounterparty(raw).takeIf { isValidMerchantName(it) }
+            }
+        }
+    }
+
+    private fun cleanupCounterparty(value: String): String {
+        return value
+            .replace(
+                Regex("""(?i)\s+(?:refno|ref\s*no|reference|utr|upi\s*ref|txn\s*id|transaction\s*id|on\b|via\b|to\b|for\b|a/c|account|bank)\b.*$"""),
+                ""
+            )
+            .trim(' ', '.', '-', ':')
     }
 
     private fun isValidMerchantName(name: String): Boolean {

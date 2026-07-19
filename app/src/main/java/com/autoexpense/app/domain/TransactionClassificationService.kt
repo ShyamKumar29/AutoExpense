@@ -73,11 +73,19 @@ object TransactionClassificationService {
             amount.isNotBlank() -> 0.65f
             else -> 0.45f
         }
+        val extractedCounterparty = extractCounterparty(rawText)
+        val displayMerchant = merchant
+            .takeUnless { it.isGenericIncomeLabel(transactionType) || it.isAmountLikeTitle() }
+            ?.ifBlank { null }
+            ?: extractedCounterparty.ifBlank {
+                if (transactionType == TransactionType.INCOME) "Income" else "Unknown Merchant"
+            }
+
         return TransactionClassification(
             transactionType = transactionType,
             confidenceScore = confidence,
             category = inferredCategory,
-            merchant = merchant.ifBlank { extractCounterparty(rawText).ifBlank { "Unknown Merchant" } },
+            merchant = displayMerchant,
             reason = reason,
             isAutoDetected = isAutoDetected
         )
@@ -99,10 +107,17 @@ object TransactionClassificationService {
                 "upi received",
                 "money received",
                 "received from",
+                "received rs",
+                "received inr",
+                "received \u20B9",
                 "transfer received",
+                "transfer from",
                 "neft received",
+                "neft from",
                 "imps received",
+                "imps from",
                 "rtgs received",
+                "rtgs from",
                 "bank transfer received",
                 "credit alert",
                 "deposit received",
@@ -153,10 +168,21 @@ object TransactionClassificationService {
     private fun incomeCategory(text: String): String {
         return when {
             text.contains("salary") -> "Salary"
+            text.contains("refund") -> "Refund"
+            text.contains("cashback") -> "Cashback"
+            text.contains("interest") -> "Interest"
+            text.contains("gift") -> "Gift"
             text.contains("rent") || text.contains("rental") -> "Rental Income"
             text.contains("freelance") -> "Freelancing"
-            text.contains("business") -> "Business Income"
+            text.contains("business") -> "Business"
             text.contains("deposit") -> "Deposit"
+            text.contains("transfer") ||
+                text.contains("received") ||
+                text.contains("credited") ||
+                text.contains("neft") ||
+                text.contains("imps") ||
+                text.contains("rtgs") ||
+                text.contains("upi") -> "Personal Transfer"
             else -> "Income"
         }
     }
@@ -179,11 +205,37 @@ object TransactionClassificationService {
         val normalized = text.replace(Regex("""\s+"""), " ").trim()
         val patterns = listOf(
             Regex("""(?i)received from\s+([A-Za-z0-9 ._@-]{2,40})"""),
+            Regex("""(?i)received\s+(?:rs\.?|inr|₹)?\s*[\d,]+(?:\.\d{1,2})?\s+from\s+([A-Za-z0-9 ._@-]{2,40})"""),
+            Regex("""(?i)credited\s+(?:by|from)\s+([A-Za-z0-9 ._@-]{2,40})"""),
+            Regex("""(?i)salary\s+credited\s+(?:by|from)\s+([A-Za-z0-9 ._@-]{2,40})"""),
+            Regex("""(?i)refund\s+from\s+([A-Za-z0-9 ._@-]{2,40})"""),
+            Regex("""(?i)(?:neft|imps|rtgs|upi|transfer)\s+(?:received\s+)?from\s+([A-Za-z0-9 ._@-]{2,40})"""),
             Regex("""(?i)paid to\s+([A-Za-z0-9 ._@-]{2,40})"""),
             Regex("""(?i)transferred to\s+([A-Za-z0-9 ._@-]{2,40})""")
         )
         return patterns.firstNotNullOfOrNull { pattern ->
-            pattern.find(normalized)?.groupValues?.getOrNull(1)?.trim()
+            pattern.find(normalized)?.groupValues?.getOrNull(1)?.trim()?.cleanCounterparty()
         }.orEmpty()
+    }
+
+    private fun String.isGenericIncomeLabel(type: TransactionType): Boolean {
+        val normalized = trim().lowercase()
+        return type == TransactionType.INCOME && normalized in setOf("", "income", "credited", "amount credited", "credit", "rs", "inr")
+    }
+
+    private fun String.isAmountLikeTitle(): Boolean {
+        val normalized = trim().lowercase()
+        return normalized in setOf("rs", "rs.", "inr", "₹") ||
+            normalized.matches(Regex("""^(?:rs\.?|inr|₹)?\s*[+-]?\s*[\d,]+(?:\.\d{1,2})?$"""))
+    }
+
+    private fun String.cleanCounterparty(): String {
+        return replace(
+            Regex("""(?i)\s+(?:ref(?:erence)?\s*(?:no)?|utr|upi\s*ref|txn(?:\s*id)?|transaction\s*id|on|via|to|for|a/c|account|bank)\b.*$"""),
+            ""
+        ).replace(
+            Regex("""(?i)\s+(?:rs\.?|inr|₹)\s*[\d,]+(?:\.\d{1,2})?.*$"""),
+            ""
+        ).trim(' ', '.', '-', ':')
     }
 }

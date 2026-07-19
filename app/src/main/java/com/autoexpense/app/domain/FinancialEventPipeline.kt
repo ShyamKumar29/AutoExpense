@@ -4,14 +4,13 @@ import android.content.Context
 import android.util.Log
 import com.autoexpense.app.BuildConfig
 import com.autoexpense.app.TransactionRepository
-import com.autoexpense.app.data.AutoExpenseDatabase
 import com.autoexpense.app.data.BillRepository
-import com.autoexpense.app.data.FinancialTransactionEntity
 import com.autoexpense.app.data.RecurringPaymentRepository
 import com.autoexpense.app.data.TransactionEntity
 import com.autoexpense.app.data.UserPreferencesRepository
 import com.autoexpense.app.notification.KnownBanks
 import com.autoexpense.app.notification.NotificationHealthRepository
+import com.autoexpense.app.notification.PaymentNotificationParser
 import com.autoexpense.app.notification.ParsedPayment
 import com.autoexpense.app.notification.SmartMerchantCleaner
 import com.autoexpense.app.notification.SmartPaymentsFeedback
@@ -98,7 +97,9 @@ object FinancialEventPipeline {
 
         val amountStr = formatLegacyAmount(payment.amount, classification.transactionType)
         val rawMerchant = payment.merchantOrRecipient
-        val cleanedMerchant = SmartMerchantCleaner.cleanMerchant(rawMerchant)
+        val cleanedMerchant = SmartMerchantCleaner.cleanMerchant(
+            resolveDisplayTitle(payment, classification)
+        )
 
         return TransactionEntity(
             id = payment.id,
@@ -127,14 +128,15 @@ object FinancialEventPipeline {
         legacyEntity: TransactionEntity,
         context: Context?
     ) {
+        val displayTitle = resolveDisplayTitle(payment, classification)
         val financialTransaction = FinancialTransaction(
             id = payment.id,
             transactionType = classification.transactionType,
             amount = payment.amount,
             currency = payment.currency.ifBlank { "INR" },
-            title = classification.merchant,
+            title = displayTitle,
             category = classification.category,
-            merchant = classification.merchant,
+            merchant = displayTitle,
             paymentMethod = payment.paymentMethod.name,
             referenceNumber = payment.bankRefNumber ?: legacyEntity.transactionFingerprint.removePrefix("ref|"),
             notes = "",
@@ -151,13 +153,7 @@ object FinancialEventPipeline {
             ),
             status = "review"
         )
-        val entity = FinancialTransactionEntity.fromDomain(financialTransaction)
-        val dao = context?.let { AutoExpenseDatabase.getDatabase(it).financialTransactionDao() }
-        if (dao != null) {
-            dao.upsert(entity)
-        } else {
-            runCatching { FinancialTransactionRepository.insert(financialTransaction) }
-        }
+        TransactionCreationService.create(financialTransaction)
     }
 
     private suspend fun runAutoMatching(payment: ParsedPayment, context: Context?) {
@@ -201,5 +197,36 @@ object FinancialEventPipeline {
             String.format(Locale.US, "%,.2f", amount)
         }
         return "$sign\u20B9$formatted"
+    }
+
+    private fun resolveDisplayTitle(
+        payment: ParsedPayment,
+        classification: TransactionClassification
+    ): String {
+        val counterparty = PaymentNotificationParser.extractIncomingCounterparty(payment.safeNotificationExcerpt).orEmpty()
+        val merchant = listOf(counterparty, classification.merchant, payment.merchantOrRecipient)
+            .firstOrNull { it.isMeaningfulTitle() }
+        if (merchant != null) return merchant
+
+        val bank = KnownBanks.detect(payment.sourceApplication)?.displayName
+            ?: KnownBanks.detect(payment.safeNotificationExcerpt)?.displayName
+        if (!bank.isNullOrBlank()) return bank
+
+        return when (classification.transactionType) {
+            TransactionType.REFUND -> "Refund"
+            TransactionType.CASHBACK -> "Cashback"
+            TransactionType.INTEREST -> "Interest"
+            TransactionType.INCOME -> "Income"
+            else -> "Unknown Merchant"
+        }
+    }
+
+    private fun String.isMeaningfulTitle(): Boolean {
+        val normalized = trim()
+        if (normalized.isBlank()) return false
+        val lower = normalized.lowercase(Locale.US)
+        if (lower in setOf("income", "credited", "amount credited", "credit", "unknown merchant", "rs", "rs.", "inr", "\u20B9")) return false
+        if (lower.matches(Regex("""^(?:rs\.?|inr|₹)?\s*[+-]?\s*[\d,]+(?:\.\d{1,2})?$"""))) return false
+        return true
     }
 }

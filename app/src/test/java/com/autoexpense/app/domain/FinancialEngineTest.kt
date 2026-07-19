@@ -47,6 +47,69 @@ class FinancialEngineTest {
         assertEquals(50000.0, IncomeAnalyticsService.getLargestIncome(transactions)?.amount ?: 0.0, 0.01)
     }
 
+    @Test
+    fun incomingClassificationUsesIncomeCategoriesAndRejectsAmountTitles() {
+        val transfer = TransactionClassificationService.classifyEvent(
+            rawText = "Transfer from Harini Rs 500",
+            amount = "500",
+            merchant = "Rs.500"
+        )
+        assertEquals(TransactionType.INCOME, transfer.transactionType)
+        assertEquals("Personal Transfer", transfer.category)
+        assertEquals("Harini", transfer.merchant)
+
+        val salary = TransactionClassificationService.classifyEvent(
+            rawText = "Salary credited by TCS INR 50000",
+            amount = "50000",
+            merchant = "Income"
+        )
+        assertEquals(TransactionType.INCOME, salary.transactionType)
+        assertEquals("Salary", salary.category)
+        assertEquals("TCS", salary.merchant)
+
+        val business = TransactionClassificationService.classifyEvent(
+            rawText = "Business payment received from Client INR 25000",
+            amount = "25000",
+            merchant = ""
+        )
+        assertEquals(TransactionType.INCOME, business.transactionType)
+        assertEquals("Business", business.category)
+    }
+
+    @Test
+    fun categoryProviderReturnsTypeAwareCategoriesAndSuggestions() {
+        val expenseCategories = DefaultCategoryProvider.getCategories(TransactionType.EXPENSE).map { it.name }
+        assertEquals(true, "Food & Dining" in expenseCategories)
+        assertEquals(false, "Salary" in expenseCategories)
+
+        val incomeCategories = DefaultCategoryProvider.getCategories(TransactionType.INCOME).map { it.name }
+        assertEquals(true, "Salary" in incomeCategories)
+        assertEquals(true, "Personal Transfer" in incomeCategories)
+        assertEquals(false, "Food & Dining" in incomeCategories)
+
+        val salary = tx("salary", TransactionType.INCOME, 50000.0).copy(
+            title = "TCS",
+            merchant = "TCS",
+            category = "Salary",
+            metadata = mapOf("classificationReason" to "Salary credited by TCS")
+        )
+        assertEquals("Salary", DefaultCategoryProvider.suggestCategory(salary)?.name)
+
+        val transfer = tx("transfer", TransactionType.INCOME, 500.0).copy(
+            title = "Harini",
+            merchant = "Harini",
+            category = "Personal Transfer",
+            metadata = mapOf("classificationReason" to "Transfer from Harini")
+        )
+        assertEquals("Personal Transfer", DefaultCategoryProvider.suggestCategory(transfer)?.name)
+
+        val cashback = tx("cashback", TransactionType.CASHBACK, 80.0).copy(
+            category = "Cashback",
+            metadata = mapOf("classificationReason" to "Cashback credited")
+        )
+        assertEquals("Cashback", DefaultCategoryProvider.suggestCategory(cashback)?.name)
+    }
+
     private fun tx(id: String, type: TransactionType, amount: Double): FinancialTransaction {
         return FinancialTransaction(
             id = id,

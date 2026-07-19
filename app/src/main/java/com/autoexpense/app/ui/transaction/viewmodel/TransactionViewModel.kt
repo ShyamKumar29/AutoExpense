@@ -9,6 +9,7 @@ import com.autoexpense.app.domain.DateRangeService
 import com.autoexpense.app.domain.FinancialTransaction
 import com.autoexpense.app.domain.FinancialTransactionRepository
 import com.autoexpense.app.domain.IncomeAnalyticsService
+import com.autoexpense.app.domain.TransactionCreationService
 import com.autoexpense.app.domain.TransactionType
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -179,7 +180,7 @@ class TransactionViewModel : ViewModel() {
                     status = "confirmed"
                 )
                 if (existing == null) {
-                    FinancialTransactionRepository.insert(transaction)
+                    TransactionCreationService.create(transaction)
                 } else {
                     FinancialTransactionRepository.update(transaction)
                 }
