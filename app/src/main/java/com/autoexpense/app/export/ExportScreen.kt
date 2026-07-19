@@ -39,6 +39,11 @@ fun ExportScreen(
     val format by viewModel.selectedFormat.collectAsState()
     val dateRange by viewModel.selectedDateRange.collectAsState()
     val category by viewModel.selectedCategory.collectAsState()
+    val transactionType by viewModel.selectedTransactionType.collectAsState()
+    val merchant by viewModel.selectedMerchant.collectAsState()
+    val paymentMethod by viewModel.selectedPaymentMethod.collectAsState()
+    val availableMerchants by viewModel.availableMerchants.collectAsState()
+    val availablePaymentMethods by viewModel.availablePaymentMethods.collectAsState()
     val filteredTransactions by viewModel.filteredTransactions.collectAsState()
     val isExporting by viewModel.isExporting.collectAsState()
     val errorMessage by viewModel.errorMessage.collectAsState()
@@ -52,8 +57,11 @@ fun ExportScreen(
         viewModel.init(context)
     }
 
-    val totalSpent = remember(filteredTransactions) {
-        ExportFilterHelper.calculateTotalSpent(filteredTransactions)
+    val summary = remember(filteredTransactions, dateRange, customStartMs, customEndMs) {
+        ExportFilterHelper.calculateSummary(
+            filteredTransactions,
+            ExportFilterHelper.periodLabel(dateRange, customStartMs, customEndMs)
+        )
     }
 
     Column(
@@ -87,7 +95,7 @@ fun ExportScreen(
                 }
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
-                    "Export Expense Report",
+                    "Export Financial Report",
                     fontWeight = FontWeight.Bold,
                     color = ColorText1,
                     fontSize = 24.sp
@@ -234,7 +242,45 @@ fun ExportScreen(
 
             Spacer(modifier = Modifier.height(18.dp))
 
-            // 3. Optional Category Filter
+            // 3. Transaction Type Filter
+            Text("TRANSACTION TYPE", fontSize = 11.sp, color = ColorText3, fontWeight = FontWeight.Bold)
+            Spacer(modifier = Modifier.height(8.dp))
+            val typeFilters = listOf(
+                ExportFilterHelper.TYPE_ALL,
+                ExportFilterHelper.TYPE_EXPENSES,
+                ExportFilterHelper.TYPE_INCOME,
+                ExportFilterHelper.TYPE_REFUNDS,
+                ExportFilterHelper.TYPE_CASHBACK,
+                ExportFilterHelper.TYPE_TRANSFERS
+            )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                for (type in typeFilters) {
+                    val selected = transactionType == type
+                    FilterChip(
+                        selected = selected,
+                        onClick = {
+                            viewModel.setTransactionType(type)
+                            viewModel.clearMessages()
+                        },
+                        label = { Text(type, fontSize = 12.sp) },
+                        colors = FilterChipDefaults.filterChipColors(
+                            selectedContainerColor = ColorOrange,
+                            selectedLabelColor = Color.White,
+                            containerColor = ColorBg2,
+                            labelColor = ColorText2
+                        )
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(18.dp))
+
+            // 4. Optional Category Filter
             Text("OPTIONAL CATEGORY FILTER", fontSize = 11.sp, color = ColorText3, fontWeight = FontWeight.Bold)
             Spacer(modifier = Modifier.height(8.dp))
             val customCategories by com.autoexpense.app.data.CustomCategoryRepository.customCategories.collectAsState(
@@ -280,7 +326,67 @@ fun ExportScreen(
 
             Spacer(modifier = Modifier.height(20.dp))
 
-            // 4. Export Preview Card
+            // 5. Optional Merchant and Payment Method Filters
+            Text("OPTIONAL MERCHANT FILTER", fontSize = 11.sp, color = ColorText3, fontWeight = FontWeight.Bold)
+            Spacer(modifier = Modifier.height(8.dp))
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                val merchants = listOf(ExportFilterHelper.MERCHANT_ALL) + availableMerchants
+                for (m in merchants) {
+                    val selected = merchant == m
+                    FilterChip(
+                        selected = selected,
+                        onClick = {
+                            viewModel.setMerchant(m)
+                            viewModel.clearMessages()
+                        },
+                        label = { Text(m, fontSize = 12.sp) },
+                        colors = FilterChipDefaults.filterChipColors(
+                            selectedContainerColor = ColorOrange,
+                            selectedLabelColor = Color.White,
+                            containerColor = ColorBg2,
+                            labelColor = ColorText2
+                        )
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(18.dp))
+            Text("OPTIONAL PAYMENT METHOD FILTER", fontSize = 11.sp, color = ColorText3, fontWeight = FontWeight.Bold)
+            Spacer(modifier = Modifier.height(8.dp))
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                val methods = listOf(ExportFilterHelper.PAYMENT_ALL) + availablePaymentMethods
+                for (method in methods) {
+                    val selected = paymentMethod == method
+                    FilterChip(
+                        selected = selected,
+                        onClick = {
+                            viewModel.setPaymentMethod(method)
+                            viewModel.clearMessages()
+                        },
+                        label = { Text(method, fontSize = 12.sp) },
+                        colors = FilterChipDefaults.filterChipColors(
+                            selectedContainerColor = ColorOrange,
+                            selectedLabelColor = Color.White,
+                            containerColor = ColorBg2,
+                            labelColor = ColorText2
+                        )
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(20.dp))
+
+            // 6. Export Preview Card
             Card(
                 colors = CardDefaults.cardColors(containerColor = ColorBg2),
                 shape = RoundedCornerShape(22.dp),
@@ -304,25 +410,53 @@ fun ExportScreen(
                     Spacer(modifier = Modifier.height(6.dp))
 
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("Transaction type:", fontSize = 13.sp, color = ColorText2)
+                        Text(transactionType, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = ColorText1)
+                    }
+                    Spacer(modifier = Modifier.height(6.dp))
+
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                         Text("Number of transactions:", fontSize = 13.sp, color = ColorText2)
                         Text("${filteredTransactions.size}", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = ColorText1)
                     }
                     Spacer(modifier = Modifier.height(6.dp))
 
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text("Total expense amount:", fontSize = 13.sp, color = ColorText2)
+                        Text("Income:", fontSize = 13.sp, color = ColorText2)
                         Text(
-                            ExportFilterHelper.formatIndianCurrency(totalSpent),
+                            ExportFilterHelper.formatIndianCurrency(summary.income),
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = ColorGreen
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(6.dp))
+
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("Expenses:", fontSize = 13.sp, color = ColorText2)
+                        Text(
+                            ExportFilterHelper.formatIndianCurrency(summary.expenses),
                             fontSize = 14.sp,
                             fontWeight = FontWeight.Bold,
                             color = ColorOrange
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(6.dp))
+
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("Net savings:", fontSize = 13.sp, color = ColorText2)
+                        Text(
+                            ExportFilterHelper.formatIndianCurrency(summary.netSavings),
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = if (summary.netSavings >= 0.0) ColorGreen else ColorAmber
                         )
                     }
 
                     if (filteredTransactions.isEmpty()) {
                         Spacer(modifier = Modifier.height(12.dp))
                         Text(
-                            "No confirmed expenses found for this period.",
+                            "No confirmed transactions found for this period.",
                             fontSize = 13.sp,
                             fontWeight = FontWeight.Bold,
                             color = ColorAmber
@@ -333,7 +467,7 @@ fun ExportScreen(
 
             Spacer(modifier = Modifier.height(20.dp))
 
-            // 5. Error Message Display
+            // 7. Error Message Display
             if (errorMessage != null) {
                 Card(
                     colors = CardDefaults.cardColors(containerColor = ColorBg2),
@@ -353,7 +487,7 @@ fun ExportScreen(
                 }
             }
 
-            // 6. Success Display & Share / Open Actions
+            // 8. Success Display & Share / Open Actions
             if (successMessage != null && generatedUri != null && generatedFilename != null) {
                 Card(
                     colors = CardDefaults.cardColors(containerColor = ColorBg2),
@@ -385,7 +519,7 @@ fun ExportScreen(
                                         putExtra(Intent.EXTRA_STREAM, generatedUri)
                                         addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                                     }
-                                    context.startActivity(Intent.createChooser(shareIntent, "Share Expense Report"))
+                                    context.startActivity(Intent.createChooser(shareIntent, "Share Financial Report"))
                                 },
                                 colors = ButtonDefaults.buttonColors(containerColor = ColorOrange),
                                 modifier = Modifier.weight(1f)
@@ -403,7 +537,7 @@ fun ExportScreen(
                                         addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                                     }
                                     try {
-                                        context.startActivity(Intent.createChooser(openIntent, "Open Expense Report"))
+                                        context.startActivity(Intent.createChooser(openIntent, "Open Financial Report"))
                                     } catch (e: Exception) {
                                         Toast.makeText(context, "No app available to open this format.", Toast.LENGTH_SHORT).show()
                                     }
@@ -419,7 +553,7 @@ fun ExportScreen(
                 }
             }
 
-            // 7. Export Trigger Button
+            // 9. Export Trigger Button
             Button(
                 onClick = { viewModel.exportReport(context) },
                 enabled = !isExporting && filteredTransactions.isNotEmpty(),

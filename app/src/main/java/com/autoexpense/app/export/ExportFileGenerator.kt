@@ -12,7 +12,7 @@ import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
 import androidx.core.content.FileProvider
-import com.autoexpense.app.data.TransactionEntity
+import com.autoexpense.app.domain.FinancialTransaction
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -26,10 +26,10 @@ object ExportFileGenerator {
     suspend fun generateCsvFile(
         context: Context,
         filename: String,
-        transactions: List<TransactionEntity>
+        transactions: List<FinancialTransaction>
     ): Pair<File, Uri> = withContext(Dispatchers.IO) {
         if (transactions.isEmpty()) {
-            throw IllegalStateException("No confirmed expenses found for this period.")
+            throw IllegalStateException("No confirmed transactions found for this period.")
         }
 
         val exportDir = File(context.cacheDir, "exports").apply { mkdirs() }
@@ -47,11 +47,11 @@ object ExportFileGenerator {
     suspend fun generatePdfFile(
         context: Context,
         filename: String,
-        transactions: List<TransactionEntity>,
+        transactions: List<FinancialTransaction>,
         periodText: String
     ): Pair<File, Uri> = withContext(Dispatchers.IO) {
         if (transactions.isEmpty()) {
-            throw IllegalStateException("No confirmed expenses found for this period.")
+            throw IllegalStateException("No confirmed transactions found for this period.")
         }
 
         val exportDir = File(context.cacheDir, "exports").apply { mkdirs() }
@@ -68,7 +68,7 @@ object ExportFileGenerator {
         var canvas = page.canvas
 
         val paintTitle = Paint().apply {
-            color = Color.parseColor("#FF6E00") // ColorOrange
+            color = Color.parseColor("#5B7FFF")
             textSize = 22f
             typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
             isAntiAlias = true
@@ -92,7 +92,7 @@ object ExportFileGenerator {
             isAntiAlias = true
         }
         val paintSection = Paint().apply {
-            color = Color.parseColor("#FF6E00")
+            color = Color.parseColor("#5B7FFF")
             textSize = 12f
             typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
             isAntiAlias = true
@@ -104,40 +104,54 @@ object ExportFileGenerator {
 
         var yPos = margin + 20f
 
-        // Title Header
-        canvas.drawText("AutoExpense", margin, yPos, paintTitle)
+        val paintIncome = Paint(paintText).apply { color = Color.parseColor("#1BA97F") }
+        val paintExpense = Paint(paintText).apply { color = Color.parseColor("#D94B4B") }
+
+        // One-page financial summary
+        val summary = ExportFilterHelper.calculateSummary(transactions, periodText)
+        val exportDate = SimpleDateFormat("d MMM yyyy, h:mm a", Locale.US).format(Date())
+
+        canvas.drawText("AUTOEXPENSE", margin, yPos, paintTitle)
         yPos += 20f
-        canvas.drawText("Expense Report", margin, yPos, paintSubtitle)
+        canvas.drawText("Financial Report", margin, yPos, paintSubtitle)
         yPos += 16f
-        canvas.drawText("Selected period: $periodText", margin, yPos, paintText)
+        canvas.drawText("Report period: ${summary.dateRangeLabel}", margin, yPos, paintText)
+        yPos += 14f
+        canvas.drawText("Export date: $exportDate", margin, yPos, paintText)
         yPos += 15f
         canvas.drawLine(margin, yPos, pageWidth - margin, yPos, paintLine)
-        yPos += 20f
 
-        // Summary Section
-        val totalSpent = ExportFilterHelper.calculateTotalSpent(transactions)
-        val categoryMap = transactions.groupBy { it.category }.mapValues { entry ->
-            entry.value.sumOf { ExportFilterHelper.parseAmount(it.amount) }
+        yPos += 30f
+        val labelX = margin
+        val valueX = margin + 150f
+        fun drawSummaryRow(label: String, value: String, valuePaint: Paint = paintBold) {
+            canvas.drawText(label, labelX, yPos, paintText)
+            canvas.drawText(value, valueX, yPos, valuePaint)
+            yPos += 18f
         }
-        val highestCategory = categoryMap.maxByOrNull { it.value }?.key ?: "None"
-        val highestAmt = categoryMap[highestCategory] ?: 0.0
 
-        canvas.drawText("Summary", margin, yPos, paintSection)
-        yPos += 16f
-        canvas.drawText("Total amount spent: ${ExportFilterHelper.formatIndianCurrency(totalSpent)}", margin, yPos, paintBold)
+        drawSummaryRow("Income", ExportFilterHelper.formatIndianCurrency(summary.income), paintIncome)
+        drawSummaryRow("Expenses", ExportFilterHelper.formatIndianCurrency(summary.expenses), paintExpense)
+        drawSummaryRow("Net Savings", ExportFilterHelper.formatIndianCurrency(summary.netSavings), if (summary.netSavings >= 0.0) paintIncome else paintExpense)
+        drawSummaryRow("Cash Flow", ExportFilterHelper.formatIndianCurrency(summary.cashFlow), if (summary.cashFlow >= 0.0) paintIncome else paintExpense)
+        yPos += 6f
+        drawSummaryRow("Transactions", summary.transactionCount.toString(), paintBold)
+        drawSummaryRow("Largest Income", ExportFilterHelper.formatIndianCurrency(summary.largestIncome), paintIncome)
+        drawSummaryRow("Largest Expense", ExportFilterHelper.formatIndianCurrency(summary.largestExpense), paintExpense)
+
         yPos += 14f
-        canvas.drawText("Number of transactions: ${transactions.size}", margin, yPos, paintText)
-        yPos += 14f
-        canvas.drawText("Highest spending category: $highestCategory (${ExportFilterHelper.formatIndianCurrency(highestAmt)})", margin, yPos, paintText)
-        yPos += 20f
         canvas.drawLine(margin, yPos, pageWidth - margin, yPos, paintLine)
         yPos += 20f
 
         // Category breakdown Section
-        canvas.drawText("Category breakdown", margin, yPos, paintSection)
+        val categoryMap = transactions.groupBy { it.category }.mapValues { entry ->
+            entry.value.sumOf { kotlin.math.abs(ExportFilterHelper.signedAmount(it)) }
+        }
+        val categoryTotal = categoryMap.values.sum()
+
+        canvas.drawText("Category Breakdown", margin, yPos, paintSection)
         yPos += 16f
 
-        // Table Header: Category | Amount | Percentage of total spending
         val colCat = margin
         val colAmt = margin + 200f
         val colPct = margin + 340f
@@ -161,7 +175,7 @@ object ExportFileGenerator {
                 canvas.drawText("Category breakdown (cont.)", margin, yPos, paintSection)
                 yPos += 16f
             }
-            val pct = if (totalSpent > 0) (entry.value / totalSpent) * 100.0 else 0.0
+            val pct = if (categoryTotal > 0) (entry.value / categoryTotal) * 100.0 else 0.0
             val pctStr = String.format(Locale.US, "%.1f%%", pct)
             val catText = truncateText(entry.key, paintText, 180f)
             canvas.drawText(catText, colCat, yPos, paintText)
@@ -184,25 +198,22 @@ object ExportFileGenerator {
             yPos = margin + 20f
         }
 
-        canvas.drawText("Transaction table", margin, yPos, paintSection)
+        canvas.drawText("Transaction Details", margin, yPos, paintSection)
         yPos += 16f
 
-        // Table Header: Date | Merchant | Category | Source | Method | Amount
         val cDate = margin
-        val cMerchant = margin + 65f
-        val cCategory = margin + 175f
-        val cSource = margin + 270f
-        val cMethod = margin + 330f
-        val cNote = margin + 390f
-        val cAmount = margin + 445f
+        val cTitle = margin + 58f
+        val cCategory = margin + 158f
+        val cType = margin + 250f
+        val cMethod = margin + 335f
+        val cAmount = margin + 430f
 
         fun drawTableHeader(c: Canvas, y: Float) {
             c.drawText("Date", cDate, y, paintBold)
-            c.drawText("Merchant", cMerchant, y, paintBold)
+            c.drawText("Title", cTitle, y, paintBold)
             c.drawText("Category", cCategory, y, paintBold)
-            c.drawText("Source", cSource, y, paintBold)
+            c.drawText("Type", cType, y, paintBold)
             c.drawText("Method", cMethod, y, paintBold)
-            c.drawText("Note", cNote, y, paintBold)
             c.drawText("Amount", cAmount, y, paintBold)
         }
 
@@ -214,16 +225,16 @@ object ExportFileGenerator {
         val dateFormat = SimpleDateFormat("dd/MM/yy", Locale.US)
 
         for (t in transactions) {
-            val dateStr = if (t.timestamp > 0) dateFormat.format(Date(t.timestamp)) else ""
-            val merchantLines = wrapText(t.merchantOrRecipient, paintText, 100f)
-            val categoryText = truncateText(t.category, paintText, 85f)
-            val sourceText = truncateText(t.source, paintText, 50f)
-            val methodText = truncateText(com.autoexpense.app.data.PaymentMethod.labelFor(t.paymentMethod), paintText, 55f)
-            val noteLines = wrapText(if (t.note.isNotEmpty()) t.note else "-", paintText, 50f)
-            val amtVal = ExportFilterHelper.parseAmount(t.amount)
-            val amtStr = ExportFilterHelper.formatIndianCurrency(amtVal)
+            val dateStr = if (t.date > 0) dateFormat.format(Date(t.date)) else ""
+            val title = t.title.ifBlank { t.merchant }.ifBlank { t.transactionType.name.replace('_', ' ') }
+            val titleLines = wrapText(title, paintText, 88f)
+            val categoryText = truncateText(t.category, paintText, 82f)
+            val typeText = truncateText(t.transactionType.name.replace('_', ' '), paintText, 75f)
+            val methodText = truncateText(ExportFilterHelper.paymentMethodLabel(t.paymentMethod), paintText, 78f)
+            val amtStr = ExportFilterHelper.formatSignedAmount(t)
+            val amtPaint = if (ExportFilterHelper.signedAmount(t) >= 0.0) paintIncome else paintExpense
 
-            val maxLines = maxOf(merchantLines.size, noteLines.size)
+            val maxLines = titleLines.size
             val rowHeight = maxLines * 12f + 4f
 
             if (yPos + rowHeight > pageHeight - margin) {
@@ -233,7 +244,7 @@ object ExportFileGenerator {
                 page = pdfDocument.startPage(pageInfo)
                 canvas = page.canvas
                 yPos = margin + 20f
-                canvas.drawText("Transaction table (cont.)", margin, yPos, paintSection)
+                canvas.drawText("Transaction Details (cont.)", margin, yPos, paintSection)
                 yPos += 16f
                 drawTableHeader(canvas, yPos)
                 yPos += 6f
@@ -243,17 +254,14 @@ object ExportFileGenerator {
 
             canvas.drawText(dateStr, cDate, yPos, paintText)
             canvas.drawText(categoryText, cCategory, yPos, paintText)
-            canvas.drawText(sourceText, cSource, yPos, paintText)
+            canvas.drawText(typeText, cType, yPos, paintText)
             canvas.drawText(methodText, cMethod, yPos, paintText)
-            canvas.drawText(amtStr, cAmount, yPos, paintText)
+            canvas.drawText(amtStr, cAmount, yPos, amtPaint)
 
             for (i in 0 until maxLines) {
                 val lineY = yPos + i * 12f
-                if (i < merchantLines.size) {
-                    canvas.drawText(merchantLines[i], cMerchant, lineY, paintText)
-                }
-                if (i < noteLines.size) {
-                    canvas.drawText(noteLines[i], cNote, lineY, paintText)
+                if (i < titleLines.size) {
+                    canvas.drawText(titleLines[i], cTitle, lineY, paintText)
                 }
             }
 

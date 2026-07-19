@@ -1,13 +1,25 @@
 package com.autoexpense.app.export
 
-import com.autoexpense.app.data.PeriodType
-import com.autoexpense.app.data.TransactionEntity
+import com.autoexpense.app.data.PaymentMethod
+import com.autoexpense.app.domain.FinancialTransaction
+import com.autoexpense.app.domain.TransactionType
 import java.text.NumberFormat
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
+
+data class ExportSummary(
+    val income: Double,
+    val expenses: Double,
+    val netSavings: Double,
+    val cashFlow: Double,
+    val largestIncome: Double,
+    val largestExpense: Double,
+    val transactionCount: Int,
+    val dateRangeLabel: String
+)
 
 object ExportFilterHelper {
 
@@ -16,6 +28,13 @@ object ExportFilterHelper {
     const val DATE_LAST_MONTH = "Last Month"
     const val DATE_ALL_TIME = "All Time"
     const val DATE_CUSTOM = "Custom Date Range"
+
+    const val TYPE_ALL = "All Transactions"
+    const val TYPE_EXPENSES = "Expenses Only"
+    const val TYPE_INCOME = "Income Only"
+    const val TYPE_REFUNDS = "Refunds"
+    const val TYPE_CASHBACK = "Cashback"
+    const val TYPE_TRANSFERS = "Transfers"
 
     const val CAT_ALL = "All Categories"
     const val CAT_FOOD = "Food & Dining"
@@ -28,67 +47,62 @@ object ExportFilterHelper {
     const val CAT_PERSONAL = "Personal Transfer"
     const val CAT_OTHER = "Other"
 
-    /**
-     * Filters transactions ensuring:
-     * - Only CONFIRMED outgoing expenses are included.
-     * - Excludes Needs Review, Ignored, Incoming, Failed, and Refund transactions.
-     * - Applies the selected date range and optional category filter.
-     */
+    const val MERCHANT_ALL = "All Merchants"
+    const val PAYMENT_ALL = "All Payment Methods"
+
     fun filterTransactions(
-        allTransactions: List<TransactionEntity>,
+        allTransactions: List<FinancialTransaction>,
         dateFilter: String,
         categoryFilter: String,
+        transactionTypeFilter: String = TYPE_ALL,
+        merchantFilter: String = MERCHANT_ALL,
+        paymentMethodFilter: String = PAYMENT_ALL,
         customStartMs: Long? = null,
         customEndMs: Long? = null,
         nowMs: Long = System.currentTimeMillis(),
         tz: TimeZone = TimeZone.getDefault()
-    ): List<TransactionEntity> {
-        // 1. Exclude non-confirmed and non-outgoing transactions
-        val confirmedOutgoing = allTransactions.filter { isConfirmedOutgoingExpense(it) }
+    ): List<FinancialTransaction> {
+        val confirmed = allTransactions
+            .asSequence()
+            .filter { it.isConfirmed }
+            .filterNot { it.isDeleted }
+            .toList()
 
-        // 2. Apply date range
-        val dateFiltered = filterDateRange(confirmedOutgoing, dateFilter, customStartMs, customEndMs, nowMs, tz)
-
-        // 3. Apply category filter
-        val finalFiltered = filterCategory(dateFiltered, categoryFilter)
-
-        // Sort newest first
-        return finalFiltered.sortedByDescending { it.timestamp }
+        return confirmed
+            .let { filterDateRange(it, dateFilter, customStartMs, customEndMs, nowMs, tz) }
+            .let { filterTransactionType(it, transactionTypeFilter) }
+            .let { filterCategory(it, categoryFilter) }
+            .let { filterMerchant(it, merchantFilter) }
+            .let { filterPaymentMethod(it, paymentMethodFilter) }
+            .distinctBy { it.id }
+            .sortedByDescending { it.date }
     }
 
-    fun isConfirmedOutgoingExpense(t: TransactionEntity): Boolean {
-        if (!t.status.equals("confirmed", ignoreCase = true)) {
-            return false
+    fun filterTransactionType(
+        transactions: List<FinancialTransaction>,
+        typeFilter: String
+    ): List<FinancialTransaction> {
+        return when (typeFilter) {
+            TYPE_EXPENSES -> transactions.filter { isExpenseType(it.transactionType) }
+            TYPE_INCOME -> transactions.filter { it.transactionType == TransactionType.INCOME }
+            TYPE_REFUNDS -> transactions.filter { it.transactionType == TransactionType.REFUND }
+            TYPE_CASHBACK -> transactions.filter { it.transactionType == TransactionType.CASHBACK }
+            TYPE_TRANSFERS -> transactions.filter { it.transactionType == TransactionType.TRANSFER }
+            TYPE_ALL, "" -> transactions
+            else -> transactions.filter { it.transactionType.name.equals(typeFilter, ignoreCase = true) }
         }
-        val lowerStatus = t.status.lowercase(Locale.US)
-        if (lowerStatus == "review" || lowerStatus == "ignored" || lowerStatus == "failed" || lowerStatus == "refund" || lowerStatus == "incoming") {
-            return false
-        }
-        val lowerDesc = "${t.merchantOrRecipient} ${t.note} ${t.detectionReason}".lowercase(Locale.US)
-        if (lowerDesc.contains("refund") || lowerDesc.contains("incoming payment") || lowerDesc.contains("credit received")) {
-            // If explicit refund/incoming
-            return false
-        }
-        // Check amount string sign if explicit + exists
-        val amtStr = t.amount.trim()
-        if (amtStr.startsWith("+") || amtStr.contains("+₹")) {
-            return false
-        }
-        return true
     }
 
     fun filterDateRange(
-        transactions: List<TransactionEntity>,
+        transactions: List<FinancialTransaction>,
         dateFilter: String,
         customStartMs: Long? = null,
         customEndMs: Long? = null,
         nowMs: Long = System.currentTimeMillis(),
         tz: TimeZone = TimeZone.getDefault()
-    ): List<TransactionEntity> {
+    ): List<FinancialTransaction> {
         val bounds = getDateRangeBounds(dateFilter, customStartMs, customEndMs, nowMs, tz)
-        val start = bounds.first
-        val end = bounds.second
-        return transactions.filter { it.timestamp in start..end }
+        return transactions.filter { it.date in bounds.first..bounds.second }
     }
 
     fun getDateRangeBounds(
@@ -134,26 +148,45 @@ object ExportFilterHelper {
                 val startMs = cal.timeInMillis
                 Pair(startMs, endMs)
             }
-            DATE_CUSTOM -> {
-                val start = customStartMs ?: 0L
-                val end = customEndMs ?: Long.MAX_VALUE
-                Pair(start, end)
-            }
-            else -> {
-                // All Time
-                Pair(0L, Long.MAX_VALUE)
-            }
+            DATE_CUSTOM -> Pair(customStartMs ?: 0L, customEndMs ?: Long.MAX_VALUE)
+            else -> Pair(0L, Long.MAX_VALUE)
         }
     }
 
     fun filterCategory(
-        transactions: List<TransactionEntity>,
+        transactions: List<FinancialTransaction>,
         categoryFilter: String
-    ): List<TransactionEntity> {
+    ): List<FinancialTransaction> {
         if (categoryFilter == CAT_ALL || categoryFilter.isEmpty()) {
             return transactions
         }
         return transactions.filter { matchesCategory(it.category, categoryFilter) }
+    }
+
+    fun filterMerchant(
+        transactions: List<FinancialTransaction>,
+        merchantFilter: String
+    ): List<FinancialTransaction> {
+        if (merchantFilter == MERCHANT_ALL || merchantFilter.isEmpty()) {
+            return transactions
+        }
+        return transactions.filter {
+            it.merchant.equals(merchantFilter, ignoreCase = true) ||
+                it.title.equals(merchantFilter, ignoreCase = true)
+        }
+    }
+
+    fun filterPaymentMethod(
+        transactions: List<FinancialTransaction>,
+        paymentMethodFilter: String
+    ): List<FinancialTransaction> {
+        if (paymentMethodFilter == PAYMENT_ALL || paymentMethodFilter.isEmpty()) {
+            return transactions
+        }
+        return transactions.filter {
+            paymentMethodLabel(it.paymentMethod).equals(paymentMethodFilter, ignoreCase = true) ||
+                it.paymentMethod.equals(paymentMethodFilter, ignoreCase = true)
+        }
     }
 
     fun matchesCategory(transactionCategory: String, categoryFilter: String): Boolean {
@@ -164,35 +197,72 @@ object ExportFilterHelper {
         if (categoryFilter == CAT_OTHER) {
             val knownKeywords = listOf(
                 "food", "dining", "transport", "groceries", "shopping",
-                "healthcare", "entertainment", "rent", "bills", "personal", "transfer", "travel"
+                "healthcare", "entertainment", "rent", "bills", "personal",
+                "transfer", "travel", "salary", "refund", "cashback", "interest",
+                "business", "freelancing", "gift", "investment", "bonus"
             )
-            val customNames = com.autoexpense.app.data.CustomCategoryRepository.customCategories.value.map { cleanCategoryString(it.name) }
-            val isKnown = knownKeywords.any { cleanTx.contains(it, ignoreCase = true) } || customNames.any { cleanTx.equals(it, ignoreCase = true) }
+            val customNames = com.autoexpense.app.data.CustomCategoryRepository.customCategories.value
+                .map { cleanCategoryString(it.name) }
+            val isKnown = knownKeywords.any { cleanTx.contains(it, ignoreCase = true) } ||
+                customNames.any { cleanTx.equals(it, ignoreCase = true) }
             return !isKnown
         }
 
         return cleanTx.equals(cleanFilter, ignoreCase = true) ||
-                cleanTx.contains(cleanFilter, ignoreCase = true) ||
-                cleanFilter.contains(cleanTx, ignoreCase = true)
+            cleanTx.contains(cleanFilter, ignoreCase = true) ||
+            cleanFilter.contains(cleanTx, ignoreCase = true)
     }
 
-    private fun cleanCategoryString(cat: String): String {
-        return cat.replace(Regex("[^a-zA-Z0-9 &/]"), "").trim()
+    fun calculateTotalSpent(transactions: List<FinancialTransaction>): Double {
+        return transactions.filter { isExpenseType(it.transactionType) }.sumOf { it.amount }
     }
 
-    fun calculateTotalSpent(transactions: List<TransactionEntity>): Double {
-        return transactions.sumOf { parseAmount(it.amount) }
+    fun calculateSummary(
+        transactions: List<FinancialTransaction>,
+        dateRangeLabel: String
+    ): ExportSummary {
+        val income = transactions.filter { isIncomeType(it.transactionType) }.sumOf { it.amount }
+        val expenses = transactions.filter { isExpenseType(it.transactionType) }.sumOf { it.amount }
+        return ExportSummary(
+            income = income,
+            expenses = expenses,
+            netSavings = income - expenses,
+            cashFlow = income - expenses,
+            largestIncome = transactions.filter { isIncomeType(it.transactionType) }.maxOfOrNull { it.amount } ?: 0.0,
+            largestExpense = transactions.filter { isExpenseType(it.transactionType) }.maxOfOrNull { it.amount } ?: 0.0,
+            transactionCount = transactions.size,
+            dateRangeLabel = dateRangeLabel
+        )
     }
 
-    fun parseAmount(amountStr: String): Double {
-        return amountStr
-            .replace("−₹", "")
-            .replace("₹", "")
-            .replace("-", "")
-            .replace("−", "")
-            .replace(",", "")
-            .trim()
-            .toDoubleOrNull() ?: 0.0
+    fun signedAmount(transaction: FinancialTransaction): Double {
+        return when {
+            isExpenseType(transaction.transactionType) -> -transaction.amount
+            isIncomeType(transaction.transactionType) -> transaction.amount
+            else -> transaction.amount
+        }
+    }
+
+    fun formatSignedAmount(transaction: FinancialTransaction): String {
+        val sign = when {
+            isExpenseType(transaction.transactionType) -> "-"
+            isIncomeType(transaction.transactionType) -> "+"
+            else -> ""
+        }
+        return sign + formatIndianCurrency(transaction.amount)
+    }
+
+    fun isExpenseType(type: TransactionType): Boolean {
+        return type == TransactionType.EXPENSE ||
+            type == TransactionType.CREDIT_CARD_PURCHASE ||
+            type == TransactionType.CREDIT_CARD_PAYMENT
+    }
+
+    fun isIncomeType(type: TransactionType): Boolean {
+        return type == TransactionType.INCOME ||
+            type == TransactionType.REFUND ||
+            type == TransactionType.CASHBACK ||
+            type == TransactionType.INTEREST
     }
 
     fun formatIndianCurrency(amount: Double): String {
@@ -200,7 +270,22 @@ object ExportFilterHelper {
             minimumFractionDigits = 2
             maximumFractionDigits = 2
         }.format(amount)
-        return "₹$formatted"
+        return "\u20B9$formatted"
+    }
+
+    fun formatPlainAmount(amount: Double): String {
+        return String.format(Locale.US, "%.2f", amount)
+    }
+
+    fun paymentMethodLabel(paymentMethod: String): String {
+        val raw = paymentMethod.trim()
+        if (raw.isBlank()) return PaymentMethod.UNKNOWN.label
+        val known = PaymentMethod.fromStored(raw)
+        return if (known == PaymentMethod.UNKNOWN && !raw.equals(PaymentMethod.UNKNOWN.name, ignoreCase = true)) {
+            raw.replace('_', ' ')
+        } else {
+            known.label
+        }
     }
 
     fun escapeCsv(value: String): String {
@@ -212,33 +297,63 @@ object ExportFilterHelper {
         }
     }
 
-    fun generateCsvContent(transactions: List<TransactionEntity>): String {
+    fun generateCsvContent(transactions: List<FinancialTransaction>): String {
         val sb = StringBuilder()
-        sb.append("Transaction ID,Date,Time,Merchant or Recipient,Category,Payment Source,Payment Method,Note,Amount,Currency,Status\r\n")
+        sb.append("Date,Time,Transaction Type,Title,Counterparty,Category,Merchant,Payment Method,Amount,Currency,Notes,Reference Number,Auto Detected,Recurring,Status\r\n")
 
         val dateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.US)
         val timeFormat = SimpleDateFormat("HH:mm:ss", Locale.US)
 
         for (t in transactions) {
-            val dateStr = if (t.timestamp > 0) dateFormat.format(Date(t.timestamp)) else ""
-            val timeStr = if (t.timestamp > 0) timeFormat.format(Date(t.timestamp)) else ""
-            val cleanAmt = String.format(Locale.US, "%.2f", parseAmount(t.amount))
+            val dateStr = if (t.date > 0) dateFormat.format(Date(t.date)) else ""
+            val timeStr = if (t.date > 0) timeFormat.format(Date(t.date)) else ""
+            val title = t.title.ifBlank { t.merchant }.ifBlank { t.transactionType.name.replace('_', ' ') }
+            val counterparty = t.merchant.ifBlank { title }
+            val amount = signedAmount(t)
+            val amountStr = if (amount > 0) {
+                "+${formatPlainAmount(amount)}"
+            } else {
+                formatPlainAmount(amount)
+            }
 
             val row = listOf(
-                escapeCsv(t.id),
                 escapeCsv(dateStr),
                 escapeCsv(timeStr),
-                escapeCsv(t.merchantOrRecipient),
+                escapeCsv(t.transactionType.name),
+                escapeCsv(title),
+                escapeCsv(counterparty),
                 escapeCsv(t.category),
-                escapeCsv(t.source),
-                escapeCsv(com.autoexpense.app.data.PaymentMethod.labelFor(t.paymentMethod)),
-                escapeCsv(t.note),
-                escapeCsv(cleanAmt),
-                escapeCsv(if (t.currency.isNotEmpty()) t.currency else "INR"),
+                escapeCsv(t.merchant),
+                escapeCsv(paymentMethodLabel(t.paymentMethod)),
+                escapeCsv(amountStr),
+                escapeCsv(t.currency.ifBlank { "INR" }),
+                escapeCsv(t.notes),
+                escapeCsv(t.referenceNumber),
+                escapeCsv(t.isAutoDetected.toString()),
+                escapeCsv(t.isRecurring.toString()),
                 escapeCsv(t.status)
             )
             sb.append(row.joinToString(separator = ",")).append("\r\n")
         }
         return sb.toString()
+    }
+
+    fun periodLabel(
+        dateFilter: String,
+        customStartMs: Long? = null,
+        customEndMs: Long? = null,
+        nowMs: Long = System.currentTimeMillis(),
+        tz: TimeZone = TimeZone.getDefault()
+    ): String {
+        val (start, end) = getDateRangeBounds(dateFilter, customStartMs, customEndMs, nowMs, tz)
+        if (dateFilter == DATE_ALL_TIME || start == 0L || end == Long.MAX_VALUE) {
+            return DATE_ALL_TIME
+        }
+        val format = SimpleDateFormat("d MMM yyyy", Locale.US)
+        return "${format.format(Date(start))} - ${format.format(Date(end))}"
+    }
+
+    private fun cleanCategoryString(cat: String): String {
+        return cat.replace(Regex("[^a-zA-Z0-9 &/]"), "").trim()
     }
 }

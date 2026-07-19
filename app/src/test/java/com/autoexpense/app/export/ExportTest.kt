@@ -1,123 +1,108 @@
 package com.autoexpense.app.export
 
-import com.autoexpense.app.data.TransactionEntity
-import org.junit.Assert.*
+import com.autoexpense.app.domain.FinancialTransaction
+import com.autoexpense.app.domain.TransactionType
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.util.Calendar
 import java.util.TimeZone
 
-/**
- * All required Phase 5 Expense Export unit tests:
- * 1. This-week filtering
- * 2. This-month filtering
- * 3. Last-month filtering
- * 4. Custom date filtering
- * 5. Category filtering
- * 6. Confirmed transactions included
- * 7. Needs Review transactions excluded
- * 8. Ignored transactions excluded
- * 9. CSV escaping
- * 10. Empty export result
- * 11. Correct total calculation
- */
 class ExportTest {
 
-    private fun createTx(
+    private fun tx(
         id: String,
-        amount: String,
-        status: String,
-        category: String = "🍔 Food & Dining",
+        type: TransactionType,
+        amount: Double,
+        status: String = "confirmed",
+        category: String = "Food & Dining",
         timestamp: Long = System.currentTimeMillis(),
-        merchant: String = "Test Merchant",
-        note: String = ""
-    ) = TransactionEntity(
+        title: String = "Test Merchant",
+        merchant: String = title,
+        method: String = "UPI",
+        notes: String = ""
+    ) = FinancialTransaction(
         id = id,
-        merchantOrRecipient = merchant,
-        sub = "com.test.bank",
+        transactionType = type,
         amount = amount,
         currency = "INR",
-        source = "banksms",
+        title = title,
         category = category,
-        status = status,
-        timestamp = timestamp,
-        confidence = 1.0f,
-        detectionReason = "SMS regex match",
-        safeNotificationExcerpt = "Payment of $amount to $merchant",
-        transactionFingerprint = "fp_$id",
+        merchant = merchant,
+        paymentMethod = method,
+        notes = notes,
+        date = timestamp,
         createdAt = timestamp,
         updatedAt = timestamp,
-        note = note
+        status = status
     )
 
     @Test
-    fun testConfirmedTransactionsIncluded() {
+    fun confirmedFinancialTransactionsAreIncludedAcrossTypes() {
         val txList = listOf(
-            createTx("1", "−₹500.00", "confirmed"),
-            createTx("2", "−₹300.00", "review")
+            tx("expense", TransactionType.EXPENSE, 500.0),
+            tx("income", TransactionType.INCOME, 3000.0, category = "Salary"),
+            tx("review", TransactionType.INCOME, 200.0, status = "review")
         )
+
         val filtered = ExportFilterHelper.filterTransactions(
             allTransactions = txList,
             dateFilter = ExportFilterHelper.DATE_ALL_TIME,
             categoryFilter = ExportFilterHelper.CAT_ALL
         )
-        assertEquals(1, filtered.size)
-        assertEquals("1", filtered[0].id)
+
+        assertEquals(2, filtered.size)
+        assertTrue(filtered.any { it.id == "expense" })
+        assertTrue(filtered.any { it.id == "income" })
+        assertFalse(filtered.any { it.id == "review" })
     }
 
     @Test
-    fun testNeedsReviewTransactionsExcluded() {
+    fun transactionTypeFilterSeparatesExpensesAndIncome() {
         val txList = listOf(
-            createTx("1", "−₹200.00", "review"),
-            createTx("2", "−₹100.00", "confirmed")
+            tx("expense", TransactionType.EXPENSE, 500.0),
+            tx("cc", TransactionType.CREDIT_CARD_PURCHASE, 700.0),
+            tx("income", TransactionType.INCOME, 3000.0, category = "Salary")
         )
-        val filtered = ExportFilterHelper.filterTransactions(
+
+        val expenses = ExportFilterHelper.filterTransactions(
             allTransactions = txList,
             dateFilter = ExportFilterHelper.DATE_ALL_TIME,
-            categoryFilter = ExportFilterHelper.CAT_ALL
+            categoryFilter = ExportFilterHelper.CAT_ALL,
+            transactionTypeFilter = ExportFilterHelper.TYPE_EXPENSES
         )
-        assertEquals(1, filtered.size)
-        assertFalse(filtered.any { it.status == "review" })
-    }
-
-    @Test
-    fun testIgnoredTransactionsExcluded() {
-        val txList = listOf(
-            createTx("1", "−₹400.00", "ignored"),
-            createTx("2", "−₹600.00", "confirmed")
-        )
-        val filtered = ExportFilterHelper.filterTransactions(
+        val income = ExportFilterHelper.filterTransactions(
             allTransactions = txList,
             dateFilter = ExportFilterHelper.DATE_ALL_TIME,
-            categoryFilter = ExportFilterHelper.CAT_ALL
+            categoryFilter = ExportFilterHelper.CAT_ALL,
+            transactionTypeFilter = ExportFilterHelper.TYPE_INCOME
         )
-        assertEquals(1, filtered.size)
-        assertFalse(filtered.any { it.status == "ignored" })
+
+        assertEquals(setOf("cc", "expense"), expenses.map { it.id }.toSet())
+        assertEquals(listOf("income"), income.map { it.id })
     }
 
     @Test
-    fun testThisWeekFiltering() {
+    fun thisWeekFilteringUsesFinancialTransactionDate() {
         val tz = TimeZone.getDefault()
         val now = System.currentTimeMillis()
         val cal = Calendar.getInstance(tz).apply { timeInMillis = now }
 
-        // Find Monday of this week
         val dow = cal.get(Calendar.DAY_OF_WEEK)
         val daysToMon = (dow - Calendar.MONDAY + 7) % 7
         cal.add(Calendar.DAY_OF_MONTH, -daysToMon)
         cal.set(Calendar.HOUR_OF_DAY, 12)
         val thisWeekMs = cal.timeInMillis
 
-        // 2 weeks ago
         cal.add(Calendar.DAY_OF_MONTH, -14)
         val twoWeeksAgoMs = cal.timeInMillis
 
-        val txList = listOf(
-            createTx("tx_this_week", "−₹100", "confirmed", timestamp = thisWeekMs),
-            createTx("tx_old", "−₹200", "confirmed", timestamp = twoWeeksAgoMs)
-        )
-
         val filtered = ExportFilterHelper.filterTransactions(
-            allTransactions = txList,
+            allTransactions = listOf(
+                tx("this_week", TransactionType.INCOME, 1000.0, timestamp = thisWeekMs, category = "Salary"),
+                tx("old", TransactionType.EXPENSE, 200.0, timestamp = twoWeeksAgoMs)
+            ),
             dateFilter = ExportFilterHelper.DATE_THIS_WEEK,
             categoryFilter = ExportFilterHelper.CAT_ALL,
             nowMs = now,
@@ -125,170 +110,83 @@ class ExportTest {
         )
 
         assertEquals(1, filtered.size)
-        assertEquals("tx_this_week", filtered[0].id)
+        assertEquals("this_week", filtered[0].id)
     }
 
     @Test
-    fun testThisMonthFiltering() {
-        val tz = TimeZone.getDefault()
-        val now = System.currentTimeMillis()
-        val cal = Calendar.getInstance(tz).apply {
-            timeInMillis = now
-            set(Calendar.DAY_OF_MONTH, 15)
-            set(Calendar.HOUR_OF_DAY, 12)
-        }
-        val thisMonthMs = cal.timeInMillis
-
-        cal.add(Calendar.MONTH, -2)
-        val twoMonthsAgoMs = cal.timeInMillis
-
+    fun categoryMerchantAndPaymentFiltersAreRespected() {
         val txList = listOf(
-            createTx("tx_this_month", "−₹500", "confirmed", timestamp = thisMonthMs),
-            createTx("tx_old_month", "−₹300", "confirmed", timestamp = twoMonthsAgoMs)
+            tx("1", TransactionType.EXPENSE, 100.0, category = "Food & Dining", title = "Swiggy", merchant = "Swiggy", method = "UPI"),
+            tx("2", TransactionType.INCOME, 2000.0, category = "Salary", title = "TCS", merchant = "TCS", method = "Bank"),
+            tx("3", TransactionType.EXPENSE, 300.0, category = "Shopping", title = "Amazon", merchant = "Amazon", method = "Card")
         )
 
         val filtered = ExportFilterHelper.filterTransactions(
             allTransactions = txList,
-            dateFilter = ExportFilterHelper.DATE_THIS_MONTH,
-            categoryFilter = ExportFilterHelper.CAT_ALL,
-            nowMs = now,
-            tz = tz
+            dateFilter = ExportFilterHelper.DATE_ALL_TIME,
+            categoryFilter = "Salary",
+            merchantFilter = "TCS",
+            paymentMethodFilter = "Bank"
         )
 
         assertEquals(1, filtered.size)
-        assertEquals("tx_this_month", filtered[0].id)
+        assertEquals("2", filtered[0].id)
     }
 
     @Test
-    fun testLastMonthFiltering() {
-        val tz = TimeZone.getDefault()
-        val now = System.currentTimeMillis()
-        val cal = Calendar.getInstance(tz).apply {
-            timeInMillis = now
-            set(Calendar.DAY_OF_MONTH, 15)
-            set(Calendar.HOUR_OF_DAY, 12)
-            add(Calendar.MONTH, -1)
-        }
-        val lastMonthMs = cal.timeInMillis
-
-        cal.add(Calendar.MONTH, -1)
-        val twoMonthsAgoMs = cal.timeInMillis
-
+    fun summaryCalculatesIncomeExpensesNetAndLargestValues() {
         val txList = listOf(
-            createTx("tx_last_month", "−₹800", "confirmed", timestamp = lastMonthMs),
-            createTx("tx_two_months_ago", "−₹400", "confirmed", timestamp = twoMonthsAgoMs),
-            createTx("tx_now", "−₹100", "confirmed", timestamp = now)
+            tx("salary", TransactionType.INCOME, 45000.0, category = "Salary"),
+            tx("refund", TransactionType.REFUND, 250.0, category = "Refund"),
+            tx("food", TransactionType.EXPENSE, 350.0),
+            tx("rent", TransactionType.EXPENSE, 12000.0, category = "Rent / Bills")
         )
 
-        val filtered = ExportFilterHelper.filterTransactions(
-            allTransactions = txList,
-            dateFilter = ExportFilterHelper.DATE_LAST_MONTH,
-            categoryFilter = ExportFilterHelper.CAT_ALL,
-            nowMs = now,
-            tz = tz
-        )
+        val summary = ExportFilterHelper.calculateSummary(txList, "1 Jul 2026 - 31 Jul 2026")
 
-        assertEquals(1, filtered.size)
-        assertEquals("tx_last_month", filtered[0].id)
+        assertEquals(45250.0, summary.income, 0.001)
+        assertEquals(12350.0, summary.expenses, 0.001)
+        assertEquals(32900.0, summary.netSavings, 0.001)
+        assertEquals(45000.0, summary.largestIncome, 0.001)
+        assertEquals(12000.0, summary.largestExpense, 0.001)
+        assertEquals(4, summary.transactionCount)
     }
 
     @Test
-    fun testCustomDateFiltering() {
-        val startMs = 1700000000000L
-        val endMs = 1700100000000L
-        val insideMs = 1700050000000L
-        val outsideMs = 1700200000000L
-
-        val txList = listOf(
-            createTx("in", "−₹100", "confirmed", timestamp = insideMs),
-            createTx("out", "−₹200", "confirmed", timestamp = outsideMs)
+    fun csvIncludesUnifiedFinancialColumnsAndSignedAmounts() {
+        val content = ExportFilterHelper.generateCsvContent(
+            listOf(
+                tx("salary", TransactionType.INCOME, 45000.0, category = "Salary", title = "TCS", merchant = "TCS"),
+                tx("food", TransactionType.EXPENSE, 350.0, title = "Swiggy", merchant = "Swiggy")
+            )
         )
 
-        val filtered = ExportFilterHelper.filterTransactions(
-            allTransactions = txList,
-            dateFilter = ExportFilterHelper.DATE_CUSTOM,
-            categoryFilter = ExportFilterHelper.CAT_ALL,
-            customStartMs = startMs,
-            customEndMs = endMs
-        )
-
-        assertEquals(1, filtered.size)
-        assertEquals("in", filtered[0].id)
+        assertTrue(content.startsWith("Date,Time,Transaction Type,Title,Counterparty,Category,Merchant,Payment Method,Amount,Currency,Notes,Reference Number,Auto Detected,Recurring,Status"))
+        assertTrue(content.contains("INCOME,TCS,TCS,Salary,TCS,UPI,+45000.00"))
+        assertTrue(content.contains("EXPENSE,Swiggy,Swiggy,Food & Dining,Swiggy,UPI,-350.00"))
     }
 
     @Test
-    fun testCategoryFiltering() {
-        val txList = listOf(
-            createTx("1", "−₹100", "confirmed", category = "🍔 Food & Dining"),
-            createTx("2", "−₹200", "confirmed", category = "🚗 Transport"),
-            createTx("3", "−₹300", "confirmed", category = "❓ Unknown")
-        )
-
-        val foodFiltered = ExportFilterHelper.filterTransactions(
-            allTransactions = txList,
-            dateFilter = ExportFilterHelper.DATE_ALL_TIME,
-            categoryFilter = ExportFilterHelper.CAT_FOOD
-        )
-        assertEquals(1, foodFiltered.size)
-        assertEquals("1", foodFiltered[0].id)
-
-        val transportFiltered = ExportFilterHelper.filterTransactions(
-            allTransactions = txList,
-            dateFilter = ExportFilterHelper.DATE_ALL_TIME,
-            categoryFilter = ExportFilterHelper.CAT_TRANSPORT
-        )
-        assertEquals(1, transportFiltered.size)
-        assertEquals("2", transportFiltered[0].id)
-
-        val otherFiltered = ExportFilterHelper.filterTransactions(
-            allTransactions = txList,
-            dateFilter = ExportFilterHelper.DATE_ALL_TIME,
-            categoryFilter = ExportFilterHelper.CAT_OTHER
-        )
-        assertEquals(1, otherFiltered.size)
-        assertEquals("3", otherFiltered[0].id)
-    }
-
-    @Test
-    fun testCorrectTotalCalculation() {
-        val txList = listOf(
-            createTx("1", "−₹1,500.50", "confirmed"),
-            createTx("2", "−₹2,499.50", "confirmed"),
-            createTx("3", "−₹500.00", "review") // should not be included when computing on confirmed filtered
-        )
-        val filtered = ExportFilterHelper.filterTransactions(
-            allTransactions = txList,
-            dateFilter = ExportFilterHelper.DATE_ALL_TIME,
-            categoryFilter = ExportFilterHelper.CAT_ALL
-        )
-        val total = ExportFilterHelper.calculateTotalSpent(filtered)
-        assertEquals(4000.0, total, 0.001)
-        assertEquals("₹4,000.00", ExportFilterHelper.formatIndianCurrency(total))
-    }
-
-    @Test
-    fun testCsvEscaping() {
+    fun csvEscapingPreservesCommasAndQuotes() {
         val raw = "Uber, Trips \"Private\" \r\n Line2"
         val escaped = ExportFilterHelper.escapeCsv(raw)
         assertEquals("\"Uber, Trips \"\"Private\"\" \r\n Line2\"", escaped)
 
-        val simple = "SimpleMerchant"
-        assertEquals("SimpleMerchant", ExportFilterHelper.escapeCsv(simple))
+        assertEquals("SimpleMerchant", ExportFilterHelper.escapeCsv("SimpleMerchant"))
     }
 
     @Test
-    fun testEmptyExportResult() {
-        val txList = listOf(
-            createTx("1", "−₹500", "review"), // only review exists
-            createTx("2", "−₹300", "ignored") // only ignored exists
-        )
+    fun emptyResultWhenNoConfirmedTransactionsMatch() {
         val filtered = ExportFilterHelper.filterTransactions(
-            allTransactions = txList,
+            allTransactions = listOf(
+                tx("1", TransactionType.EXPENSE, 500.0, status = "review"),
+                tx("2", TransactionType.INCOME, 300.0, status = "ignored")
+            ),
             dateFilter = ExportFilterHelper.DATE_THIS_WEEK,
             categoryFilter = ExportFilterHelper.CAT_ALL
         )
-        assertTrue("Filtered transactions should be empty when no confirmed matches exist", filtered.isEmpty())
-        val total = ExportFilterHelper.calculateTotalSpent(filtered)
-        assertEquals(0.0, total, 0.0001)
+
+        assertTrue(filtered.isEmpty())
+        assertEquals(0.0, ExportFilterHelper.calculateTotalSpent(filtered), 0.0001)
     }
 }

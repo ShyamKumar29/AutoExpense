@@ -4,8 +4,8 @@ import android.content.Context
 import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.autoexpense.app.data.AutoExpenseDatabase
-import com.autoexpense.app.data.TransactionEntity
+import com.autoexpense.app.domain.FinancialTransaction
+import com.autoexpense.app.domain.FinancialTransactionRepository
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import java.io.File
@@ -13,13 +13,24 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
+private data class ExportFilterSelection(
+    val dateRange: String,
+    val category: String,
+    val transactionType: String,
+    val merchant: String,
+    val paymentMethod: String
+)
+
 class ExportViewModel : ViewModel() {
 
-    private val _allConfirmedEntities = MutableStateFlow<List<TransactionEntity>>(emptyList())
+    private val _allTransactions = MutableStateFlow<List<FinancialTransaction>>(emptyList())
 
     val selectedFormat = MutableStateFlow("PDF Report")
     val selectedDateRange = MutableStateFlow(ExportFilterHelper.DATE_THIS_MONTH)
     val selectedCategory = MutableStateFlow(ExportFilterHelper.CAT_ALL)
+    val selectedTransactionType = MutableStateFlow(ExportFilterHelper.TYPE_ALL)
+    val selectedMerchant = MutableStateFlow(ExportFilterHelper.MERCHANT_ALL)
+    val selectedPaymentMethod = MutableStateFlow(ExportFilterHelper.PAYMENT_ALL)
     val customStartMs = MutableStateFlow<Long?>(null)
     val customEndMs = MutableStateFlow<Long?>(null)
 
@@ -30,27 +41,58 @@ class ExportViewModel : ViewModel() {
     val generatedFilename = MutableStateFlow<String?>(null)
     val generatedFile = MutableStateFlow<File?>(null)
 
-    val filteredTransactions: StateFlow<List<TransactionEntity>> = combine(
-        _allConfirmedEntities,
+    private val filterSelection = combine(
         selectedDateRange,
         selectedCategory,
+        selectedTransactionType,
+        selectedMerchant,
+        selectedPaymentMethod
+    ) { dateRange, category, transactionType, merchant, paymentMethod ->
+        ExportFilterSelection(dateRange, category, transactionType, merchant, paymentMethod)
+    }
+
+    val filteredTransactions: StateFlow<List<FinancialTransaction>> = combine(
+        _allTransactions,
+        filterSelection,
         customStartMs,
         customEndMs
-    ) { all, dateRange, category, startMs, endMs ->
+    ) { all, filters, startMs, endMs ->
         ExportFilterHelper.filterTransactions(
             allTransactions = all,
-            dateFilter = dateRange,
-            categoryFilter = category,
+            dateFilter = filters.dateRange,
+            categoryFilter = filters.category,
+            transactionTypeFilter = filters.transactionType,
+            merchantFilter = filters.merchant,
+            paymentMethodFilter = filters.paymentMethod,
             customStartMs = startMs,
             customEndMs = endMs
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
+    val availableMerchants: StateFlow<List<String>> = _allTransactions.map { list ->
+        list.asSequence()
+            .filter { it.isConfirmed && !it.isDeleted }
+            .map { it.merchant.ifBlank { it.title } }
+            .filter { it.isNotBlank() }
+            .distinct()
+            .sorted()
+            .toList()
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val availablePaymentMethods: StateFlow<List<String>> = _allTransactions.map { list ->
+        list.asSequence()
+            .filter { it.isConfirmed && !it.isDeleted }
+            .map { ExportFilterHelper.paymentMethodLabel(it.paymentMethod) }
+            .filter { it.isNotBlank() }
+            .distinct()
+            .sorted()
+            .toList()
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
     fun init(context: Context) {
         viewModelScope.launch {
-            val dao = AutoExpenseDatabase.getDatabase(context).transactionDao()
-            dao.observeConfirmed().collect { list ->
-                _allConfirmedEntities.value = list
+            FinancialTransactionRepository.observeAllTransactions().collect { list ->
+                _allTransactions.value = list
             }
         }
     }
@@ -67,6 +109,18 @@ class ExportViewModel : ViewModel() {
         selectedCategory.value = category
     }
 
+    fun setTransactionType(type: String) {
+        selectedTransactionType.value = type
+    }
+
+    fun setMerchant(merchant: String) {
+        selectedMerchant.value = merchant
+    }
+
+    fun setPaymentMethod(paymentMethod: String) {
+        selectedPaymentMethod.value = paymentMethod
+    }
+
     fun setCustomDates(startMs: Long?, endMs: Long?) {
         customStartMs.value = startMs
         customEndMs.value = endMs
@@ -80,7 +134,7 @@ class ExportViewModel : ViewModel() {
     fun exportReport(context: Context) {
         val transactions = filteredTransactions.value
         if (transactions.isEmpty()) {
-            errorMessage.value = "No confirmed expenses found for this period."
+            errorMessage.value = "No confirmed transactions found for this period."
             return
         }
 
@@ -91,6 +145,11 @@ class ExportViewModel : ViewModel() {
         viewModelScope.launch {
             try {
                 val dateSuffix = SimpleDateFormat("MMMM_yyyy", Locale.US).format(Date())
+                val periodLabel = ExportFilterHelper.periodLabel(
+                    selectedDateRange.value,
+                    customStartMs.value,
+                    customEndMs.value
+                )
                 val format = selectedFormat.value
 
                 if (format == "PDF Report") {
@@ -99,7 +158,7 @@ class ExportViewModel : ViewModel() {
                         context = context,
                         filename = filename,
                         transactions = transactions,
-                        periodText = selectedDateRange.value
+                        periodText = periodLabel
                     )
                     generatedFile.value = result.first
                     generatedUri.value = result.second
