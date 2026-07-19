@@ -103,6 +103,12 @@ import com.autoexpense.app.data.TransactionDao
 import com.autoexpense.app.data.TransactionEntity
 import com.autoexpense.app.data.PaymentMethod
 import com.autoexpense.app.data.PeriodType
+import com.autoexpense.app.dashboard.DashboardMetric
+import com.autoexpense.app.dashboard.DashboardRenderState
+import com.autoexpense.app.dashboard.DashboardRenderStateBuilder
+import com.autoexpense.app.dashboard.DashboardWidget
+import com.autoexpense.app.dashboard.DashboardWidgetDefaults
+import com.autoexpense.app.dashboard.WidgetType
 import com.autoexpense.app.budget.BudgetLevel
 import com.autoexpense.app.budget.BudgetNotificationHelper
 import com.autoexpense.app.budget.BudgetRepositorySingleton
@@ -600,6 +606,17 @@ class DashboardViewModel : ViewModel() {
     val pendingReviewCount: StateFlow<Int> = transactions.map { list ->
         list.count { it.status.equals("review", ignoreCase = true) }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
+
+    val dashboardState: StateFlow<DashboardRenderState> = combine(transactions, pendingReviewCount) { list, pending ->
+        DashboardRenderStateBuilder.build(
+            transactions = list,
+            pendingReviewCount = pending
+        )
+    }.stateIn(
+        viewModelScope,
+        SharingStarted.WhileSubscribed(5000),
+        DashboardRenderStateBuilder.build(emptyList(), 0)
+    )
 }
 
 data class DateFilter(val startMs: Long, val endMs: Long, val label: String)
@@ -1083,10 +1100,15 @@ fun MainAppContainer(
                                 activeScreen = "receipts"
                             }
                         )
+                        "analytics" -> FinancialAnalyticsScreen(
+                            viewModel = dashboardViewModel,
+                            onNavigateBack = { activeScreen = "dashboard" }
+                        )
                         "receipts" -> ReceiptsLedgerScreen(
                             viewModel = receiptsViewModel,
                             onNavigateToExport = { activeScreen = "export" }
                         )
+                        "income" -> com.autoexpense.app.ui.transaction.screens.IncomeScreen()
                         "review" -> NeedsReviewScreen(
                             viewModel = reviewViewModel,
                             budgetViewModel = budgetViewModel,
@@ -1173,6 +1195,7 @@ fun AppBottomBar(
         listOf(
             "dashboard" to "Dashboard",
             "receipts" to "Transactions",
+            "income" to "Income",
             "review" to "Review",
             "budget" to "Budget",
             "payments" to "Payments"
@@ -1181,6 +1204,7 @@ fun AppBottomBar(
             val icon = when (route) {
                 "dashboard" -> Icons.Default.Home
                 "receipts" -> Icons.AutoMirrored.Filled.ReceiptLong
+                "income" -> Icons.Default.AccountBalance
                 "review" -> Icons.Default.CheckCircle
                 "budget" -> Icons.Default.AccountBalanceWallet
                 else -> Icons.Default.CreditCard
@@ -1248,12 +1272,19 @@ fun DashboardScreen(
     onDismissSetupCard: () -> Unit = {},
     onNavigateToReceiptsWithFilter: (Long, Long, String) -> Unit = { _, _, _ -> onNavigate("receipts") }
 ) {
-    var searchQuery by remember { mutableStateOf("") }
     var chartType by remember { mutableStateOf("weekly") }
 
     val transactions by viewModel.transactions.collectAsState()
     val totalSpent by viewModel.totalSpent.collectAsState()
-    val pendingReviewCount by viewModel.pendingReviewCount.collectAsState()
+    val dashboardState by viewModel.dashboardState.collectAsState()
+    val dashboardWidgets = remember(showUpcomingPaymentsWidget) {
+        DashboardWidgetDefaults.defaultWidgets(showUpcomingPayments = showUpcomingPaymentsWidget)
+    }
+    val expandedSections = remember(dashboardWidgets) {
+        mutableStateMapOf<String, Boolean>().apply {
+            dashboardWidgets.forEach { widget -> put(widget.id, widget.defaultExpanded) }
+        }
+    }
 
     Column(
         modifier = Modifier
@@ -1275,86 +1306,849 @@ fun DashboardScreen(
         Column(modifier = Modifier.padding(horizontal = 16.dp)) {
             Spacer(modifier = Modifier.height(6.dp))
 
-            val confirmedForDashboard = remember(transactions) {
-                DashboardViewModel.computeConfirmedOutgoing(transactions)
-            }
-            val totalSpentValue = remember(totalSpent) { DashboardViewModel.parseAmount(totalSpent) }
-            val avgExpense = if (confirmedForDashboard.isNotEmpty()) totalSpentValue / confirmedForDashboard.size else 0.0
-
-            DashboardHeroCard(
-                totalSpent = totalSpent,
-                pendingReviewCount = pendingReviewCount,
-                monthTransactionCount = confirmedForDashboard.size
-            )
-
-            Spacer(modifier = Modifier.height(10.dp))
-
-            DashboardSimpleStats(
-                transactionCount = confirmedForDashboard.size,
-                averageExpense = DashboardViewModel.formatIndianCurrencyValue(avgExpense)
-            )
-
-            Spacer(modifier = Modifier.height(10.dp))
-
-            if (showUpcomingPaymentsWidget) {
-                com.autoexpense.app.finance.UpcomingDashboardCard(
-                    onViewAll = { onNavigate("payments") }
-                )
-
+            dashboardWidgets.forEach { widget ->
+                val expanded = expandedSections[widget.id] ?: widget.defaultExpanded
+                CollapsibleDashboardSection(
+                    widget = widget,
+                    expanded = expanded,
+                    onExpandedChange = { expandedSections[widget.id] = it }
+                ) {
+                    RenderDashboardWidget(
+                        widget = widget,
+                        state = dashboardState,
+                        chartType = chartType,
+                        onChartTypeChange = { chartType = it },
+                        onNavigate = onNavigate
+                    )
+                }
                 Spacer(modifier = Modifier.height(10.dp))
             }
 
-            SpendingByCategoryCard(
-                transactions = transactions,
-                periodType = chartType,
-                onPeriodChange = { chartType = it }
+            Spacer(modifier = Modifier.height(24.dp))
+        }
+    }
+}
+
+@Composable
+private fun CollapsibleDashboardSection(
+    widget: DashboardWidget,
+    expanded: Boolean,
+    onExpandedChange: (Boolean) -> Unit,
+    content: @Composable () -> Unit
+) {
+    if (!widget.collapsible) {
+        content()
+        return
+    }
+
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(14.dp))
+                .clickable { onExpandedChange(!expanded) }
+                .padding(horizontal = 2.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(widget.title, color = ColorText1, fontSize = 18.sp, fontWeight = FontWeight.ExtraBold)
+            Icon(
+                imageVector = Icons.Default.ExpandMore,
+                contentDescription = if (expanded) "Collapse ${widget.title}" else "Expand ${widget.title}",
+                tint = ColorText2,
+                modifier = Modifier.rotate(if (expanded) 0f else -90f)
             )
+        }
+        AnimatedVisibility(
+            visible = expanded,
+            enter = fadeIn(animationSpec = tween(180)) + expandVertically(animationSpec = tween(220)),
+            exit = fadeOut(animationSpec = tween(140)) + shrinkVertically(animationSpec = tween(180))
+        ) {
+            content()
+        }
+    }
+}
+
+@Composable
+fun RenderDashboardWidget(
+    widget: DashboardWidget,
+    state: DashboardRenderState,
+    chartType: String,
+    onChartTypeChange: (String) -> Unit,
+    onNavigate: (String) -> Unit
+) {
+    when (widget.type) {
+        WidgetType.FINANCIAL_SUMMARY -> {
+            DashboardFinancialSummaryHero(state = state)
+        }
+        WidgetType.CASH_FLOW -> {
+            DashboardCashFlowWidget(
+                income = state.incomeMetric,
+                expense = state.expenseMetric,
+                savings = state.savingsMetric,
+                cashFlow = state.cashFlowMetric,
+                onClick = { onNavigate("analytics") }
+            )
+        }
+        WidgetType.INCOME -> {
+            DashboardIncomeWidget(
+                state = state,
+                onClick = { onNavigate("income") }
+            )
+        }
+        WidgetType.EXPENSE -> {
+            DashboardSimpleStats(
+                transactionCount = state.transactionCount,
+                averageExpense = state.averageExpenseLabel
+            )
+        }
+        WidgetType.BUDGET -> Unit
+        WidgetType.CATEGORY_ANALYTICS -> DashboardTopCategories(transactions = state.transactions, periodType = chartType)
+        WidgetType.SPENDING_ANALYTICS -> {
+            SpendingByCategoryCard(
+                transactions = state.transactions,
+                periodType = chartType,
+                onPeriodChange = onChartTypeChange
+            )
+        }
+        WidgetType.UPCOMING_PAYMENTS -> {
+            com.autoexpense.app.finance.UpcomingDashboardCard(
+                onViewAll = { onNavigate("payments") }
+            )
+        }
+        WidgetType.RECENT_TRANSACTIONS -> DashboardRecentTransactionsWidget(
+            transactions = state.transactions,
+            onViewAll = { onNavigate("receipts") }
+        )
+    }
+}
+
+@Composable
+private fun DashboardFinancialSummaryHero(state: DashboardRenderState) {
+    val trendText = remember(state.expenseMetric.supportingText) {
+        state.expenseMetric.supportingText.ifBlank { "0.0% vs last month" }
+    }
+    val trendPositive = !trendText.trim().startsWith("+")
+
+    Card(
+        colors = CardDefaults.cardColors(containerColor = Color.Transparent),
+        shape = RoundedCornerShape(22.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(22.dp))
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(
+                    Brush.linearGradient(
+                        listOf(Color(0xFF243E99), Color(0xFF081433)),
+                        start = Offset(0f, 0f),
+                        end = Offset(900f, 520f)
+                    )
+                )
+                .border(1.dp, ColorOrange.copy(alpha = 0.45f), RoundedCornerShape(22.dp))
+                .padding(horizontal = 20.dp, vertical = 16.dp)
+        ) {
+            Column {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.Top
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            "Financial Overview",
+                            color = Color.White.copy(alpha = 0.78f),
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        AnimatedAmountText(
+                            targetFormatted = state.savingsMetric.value,
+                            fontSize = 34.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = Color.White
+                        )
+                        Text(
+                            "Net savings this month",
+                            color = Color.White.copy(alpha = 0.68f),
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(12.dp))
+                    DashboardTrendPill(
+                        text = trendText,
+                        positive = trendPositive
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(14.dp))
+
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                    DashboardHeroSummaryPill(
+                        metric = DashboardMetric("Income", state.incomeMetric.value),
+                        modifier = Modifier.weight(1f)
+                    )
+                    DashboardHeroSummaryPill(
+                        metric = DashboardMetric("Expenses", state.expenseMetric.value),
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun DashboardTrendPill(
+    text: String,
+    positive: Boolean
+) {
+    val tint = if (positive) ColorGreen else ColorAmber
+    Surface(
+        color = tint.copy(alpha = 0.16f),
+        shape = RoundedCornerShape(999.dp),
+        border = BorderStroke(1.dp, tint.copy(alpha = 0.22f))
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = if (positive) Icons.Default.ArrowDownward else Icons.Default.ArrowUpward,
+                contentDescription = null,
+                tint = tint,
+                modifier = Modifier.size(14.dp)
+            )
+            Spacer(modifier = Modifier.width(4.dp))
+            Text(text, color = tint, fontSize = 11.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+        }
+    }
+}
+
+@Composable
+private fun DashboardHeroSummaryPill(
+    metric: DashboardMetric,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        color = Color.White.copy(alpha = 0.09f),
+        shape = RoundedCornerShape(14.dp),
+        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.10f)),
+        modifier = modifier
+    ) {
+        Column(modifier = Modifier.padding(horizontal = 10.dp, vertical = 9.dp)) {
+            Text(
+                metric.label,
+                color = Color.White.copy(alpha = 0.72f),
+                fontSize = 10.sp,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                metric.value,
+                color = Color.White,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                softWrap = false,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+    }
+}
+
+@Composable
+private fun DashboardCashFlowWidget(
+    income: DashboardMetric,
+    expense: DashboardMetric,
+    savings: DashboardMetric,
+    cashFlow: DashboardMetric,
+    onClick: () -> Unit
+) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = ColorBg2),
+        shape = RoundedCornerShape(22.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = 5.dp),
+        border = BorderStroke(1.dp, ColorBg3),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onClick() }
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column {
+                    Text("Cash Flow", color = ColorText1, fontSize = 20.sp, fontWeight = FontWeight.ExtraBold)
+                    Text("Income, expenses and savings this month", color = ColorText3, fontSize = 12.sp)
+                }
+                Icon(
+                    imageVector = Icons.Default.AccountBalanceWallet,
+                    contentDescription = null,
+                    tint = ColorOrange,
+                    modifier = Modifier.size(24.dp)
+                )
+            }
+
+            Spacer(modifier = Modifier.height(14.dp))
+
+            BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+                val compact = maxWidth < 330.dp
+                if (compact) {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        DashboardInlineMetric(income, ColorGreen)
+                        DashboardInlineMetric(expense, ColorRed)
+                        DashboardInlineMetric(savings, ColorOrange)
+                        DashboardInlineMetric(cashFlow, if (cashFlow.value.contains("-")) ColorRed else ColorGreen)
+                    }
+                } else {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                            DashboardInlineMetric(income, ColorGreen, Modifier.weight(1f))
+                            DashboardInlineMetric(expense, ColorRed, Modifier.weight(1f))
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                            DashboardInlineMetric(savings, ColorOrange, Modifier.weight(1f))
+                            DashboardInlineMetric(cashFlow, if (cashFlow.value.contains("-")) ColorRed else ColorGreen, Modifier.weight(1f))
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun DashboardInlineMetric(
+    metric: DashboardMetric,
+    accent: Color,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        color = ColorBg1.copy(alpha = 0.72f),
+        shape = RoundedCornerShape(16.dp),
+        border = BorderStroke(1.dp, ColorBg3.copy(alpha = 0.7f)),
+        modifier = modifier
+    ) {
+        Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
+            Text(metric.label, color = ColorText2, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+            Spacer(modifier = Modifier.height(6.dp))
+            AnimatedAmountText(
+                targetFormatted = metric.value,
+                fontSize = 18.sp,
+                fontWeight = FontWeight.ExtraBold,
+                color = ColorText1
+            )
+            if (metric.supportingText.isNotBlank()) {
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    metric.supportingText,
+                    color = accent,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun DashboardIncomeWidget(
+    state: DashboardRenderState,
+    onClick: () -> Unit
+) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = ColorBg2),
+        shape = RoundedCornerShape(22.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = 5.dp),
+        border = BorderStroke(1.dp, ColorBg3),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onClick() }
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier
+                            .size(42.dp)
+                            .clip(RoundedCornerShape(13.dp))
+                            .background(ColorGreen.copy(alpha = 0.16f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(Icons.Default.ArrowUpward, contentDescription = null, tint = ColorGreen, modifier = Modifier.size(23.dp))
+                    }
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column {
+                        Text("Income", color = ColorText1, fontSize = 18.sp, fontWeight = FontWeight.ExtraBold)
+                        Text("This month income", color = ColorText3, fontSize = 12.sp)
+                    }
+                }
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.clip(RoundedCornerShape(999.dp)).clickable { onClick() }.padding(horizontal = 2.dp, vertical = 4.dp)
+                ) {
+                    Text("View Details", color = ColorOrange, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                    Spacer(modifier = Modifier.width(3.dp))
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                        contentDescription = null,
+                        tint = ColorOrange,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(14.dp))
+
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                DashboardInlineMetric(
+                    metric = DashboardMetric("This Month", state.incomeMetric.value, state.incomeMetric.supportingText),
+                    accent = ColorGreen,
+                    modifier = Modifier.weight(1f)
+                )
+                DashboardInlineMetric(
+                    metric = state.largestIncomeMetric,
+                    accent = ColorOrange,
+                    modifier = Modifier.weight(1f)
+                )
+            }
 
             Spacer(modifier = Modifier.height(10.dp))
 
-            DashboardTopCategories(transactions = transactions, periodType = chartType)
+            Surface(
+                color = ColorBg1.copy(alpha = 0.72f),
+                shape = RoundedCornerShape(16.dp),
+                border = BorderStroke(1.dp, ColorBg3.copy(alpha = 0.7f)),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Income Transactions", color = ColorText2, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                    Text(state.incomeCount.toString(), color = ColorText1, fontSize = 18.sp, fontWeight = FontWeight.ExtraBold)
+                }
+            }
+        }
+    }
+}
 
-            Spacer(modifier = Modifier.height(22.dp))
+@Composable
+private fun DashboardFinancialMetricPair(
+    title: String,
+    primary: DashboardMetric,
+    secondary: DashboardMetric,
+    leadingIcon: ImageVector,
+    leadingColor: Color,
+    onClick: () -> Unit
+) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = ColorBg2),
+        shape = RoundedCornerShape(22.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = 5.dp),
+        border = BorderStroke(1.dp, ColorBg3),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onClick() }
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier
+                            .size(42.dp)
+                            .clip(RoundedCornerShape(13.dp))
+                            .background(leadingColor.copy(alpha = 0.16f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(leadingIcon, contentDescription = null, tint = leadingColor, modifier = Modifier.size(23.dp))
+                    }
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column {
+                        Text(title, color = ColorText1, fontSize = 18.sp, fontWeight = FontWeight.ExtraBold)
+                        Text("Tap to view details", color = ColorText3, fontSize = 12.sp)
+                    }
+                }
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                    contentDescription = null,
+                    tint = ColorText3,
+                    modifier = Modifier.size(22.dp)
+                )
+            }
 
-            // LIVE SEARCH & TRANSACTIONS TABLE
+            Spacer(modifier = Modifier.height(14.dp))
+
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                DashboardInlineMetric(primary, leadingColor, Modifier.weight(1f))
+                DashboardInlineMetric(secondary, ColorOrange, Modifier.weight(1f))
+            }
+        }
+    }
+}
+
+@Composable
+private fun DashboardRecentTransactionsWidget(
+    transactions: List<Transaction>,
+    onViewAll: () -> Unit
+) {
+    val recentTransactions = remember(transactions) {
+            transactions.filter {
+                !it.status.equals("ignored", ignoreCase = true) &&
+                    !it.status.equals("duplicate", ignoreCase = true)
+            }
+                .sortedByDescending { it.timestamp }
+                .take(5)
+    }
+
+    Card(
+        colors = CardDefaults.cardColors(containerColor = ColorBg2),
+        shape = RoundedCornerShape(22.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = 5.dp),
+        border = BorderStroke(1.dp, ColorBg3),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column {
+                    Text("Recent Transactions", color = ColorText1, fontSize = 18.sp, fontWeight = FontWeight.ExtraBold)
+                    Text("Last 5 account activities", color = ColorText3, fontSize = 12.sp)
+                }
+                TextButton(onClick = onViewAll) {
+                    Text("View All", color = ColorOrange, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                        contentDescription = null,
+                        tint = ColorOrange,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            if (recentTransactions.isEmpty()) {
+                Text(
+                    "No recent transactions.",
+                    color = ColorText2,
+                    fontSize = 13.sp,
+                    modifier = Modifier.padding(vertical = 18.dp)
+                )
+            } else {
+                recentTransactions.forEachIndexed { index, transaction ->
+                    DashboardRecentTransactionRow(transaction = transaction)
+                    if (index != recentTransactions.lastIndex) {
+                        HorizontalDivider(color = ColorBg3.copy(alpha = 0.65f), thickness = 1.dp)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun DashboardRecentTransactionRow(transaction: Transaction) {
+    val financialTransaction = remember(transaction) {
+        com.autoexpense.app.domain.FinancialTransactionMapper.fromUiTransaction(transaction)
+    }
+    val type = financialTransaction.transactionType
+    val (icon, tint) = when (type) {
+        com.autoexpense.app.domain.TransactionType.INCOME -> Icons.Default.ArrowUpward to ColorGreen
+        com.autoexpense.app.domain.TransactionType.REFUND -> Icons.Default.Replay to ColorGreen
+        com.autoexpense.app.domain.TransactionType.CASHBACK -> Icons.Default.CardGiftcard to ColorGreen
+        com.autoexpense.app.domain.TransactionType.INTEREST -> Icons.Default.Savings to ColorGreen
+        else -> Icons.AutoMirrored.Filled.ReceiptLong to ColorOrange
+    }
+    val dateText = remember(transaction.timestamp) {
+        java.text.SimpleDateFormat("dd MMM", java.util.Locale.US).format(java.util.Date(transaction.timestamp))
+    }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 11.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier
+                .size(40.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .background(tint.copy(alpha = 0.15f)),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(21.dp))
+        }
+        Spacer(modifier = Modifier.width(12.dp))
+        Column(modifier = Modifier.weight(1f)) {
             Text(
-                text = "Recent Transactions",
-                fontSize = 16.sp,
-                fontWeight = FontWeight.Bold,
+                transaction.merchant.ifBlank { "Unknown Merchant" },
                 color = ColorText1,
-                modifier = Modifier.padding(bottom = 8.dp)
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
             )
+            Spacer(modifier = Modifier.height(3.dp))
+            Text(
+                "${com.autoexpense.app.ui.cleanCategoryName(transaction.category).ifBlank { "Other" }} - $dateText",
+                color = ColorText3,
+                fontSize = 12.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+        Spacer(modifier = Modifier.width(10.dp))
+        Text(
+            transaction.amount,
+            color = if (type == com.autoexpense.app.domain.TransactionType.INCOME) ColorGreen else ColorText1,
+            fontSize = 14.sp,
+            fontWeight = FontWeight.ExtraBold,
+            maxLines = 1,
+            softWrap = false
+        )
+    }
+}
 
-            OutlinedTextField(
-                value = searchQuery,
-                onValueChange = { searchQuery = it },
-                placeholder = { Text("Search transactions...", color = ColorText3) },
-                leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null, tint = ColorText3) },
-                singleLine = true,
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = ColorOrange,
-                    unfocusedBorderColor = ColorBg3,
-                    focusedTextColor = ColorText1,
-                    unfocusedTextColor = ColorText1
+@Composable
+fun FinancialAnalyticsScreen(
+    viewModel: DashboardViewModel,
+    onNavigateBack: () -> Unit
+) {
+    val state by viewModel.dashboardState.collectAsState()
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(ColorBg0)
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 16.dp, vertical = 18.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            IconButton(onClick = onNavigateBack) {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                    contentDescription = "Back",
+                    tint = ColorText1,
+                    modifier = Modifier.rotate(180f)
+                )
+            }
+            Spacer(modifier = Modifier.width(4.dp))
+            Column {
+                Text("Financial Analytics", color = ColorText1, fontSize = 26.sp, fontWeight = FontWeight.ExtraBold)
+                Text("Income, expenses, cash flow and merchants", color = ColorText2, fontSize = 13.sp)
+            }
+        }
+
+        Spacer(modifier = Modifier.height(18.dp))
+
+        DashboardCashFlowWidget(
+            income = state.incomeMetric,
+            expense = state.expenseMetric,
+            savings = state.savingsMetric,
+            cashFlow = state.cashFlowMetric,
+            onClick = {}
+        )
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        DashboardAnalyticsTrendCard(
+            title = "Weekly Trends",
+            incomeTrend = state.incomeTrend,
+            expenseTrend = state.expenseTrend,
+            cashFlowTrend = state.cashFlowTrend
+        )
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        DashboardAnalyticsBreakdownCard(
+            title = "Income Breakdown",
+            items = state.incomeBreakdown.map { it.category to it.amount },
+            emptyText = "No income categories yet."
+        )
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        DashboardAnalyticsBreakdownCard(
+            title = "Expense Breakdown",
+            items = state.expenseBreakdown.map { it.category to it.amount },
+            emptyText = "No expense categories yet."
+        )
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        DashboardAnalyticsBreakdownCard(
+            title = "Top Merchants",
+            items = state.merchantBreakdown.take(5).map { it.merchant to it.amount },
+            emptyText = "No merchant activity yet."
+        )
+
+        Spacer(modifier = Modifier.height(24.dp))
+    }
+}
+
+@Composable
+private fun DashboardAnalyticsTrendCard(
+    title: String,
+    incomeTrend: List<com.autoexpense.app.domain.TimeBucketSummary>,
+    expenseTrend: List<com.autoexpense.app.domain.TimeBucketSummary>,
+    cashFlowTrend: List<com.autoexpense.app.domain.TimeBucketSummary>
+) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = ColorBg2),
+        shape = RoundedCornerShape(22.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = 5.dp),
+        border = BorderStroke(1.dp, ColorBg3),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(title, color = ColorText1, fontSize = 20.sp, fontWeight = FontWeight.ExtraBold)
+            Spacer(modifier = Modifier.height(14.dp))
+            DashboardMiniLineChart(
+                series = listOf(
+                    incomeTrend.map { it.amount } to ColorGreen,
+                    expenseTrend.map { it.amount } to ColorRed,
+                    cashFlowTrend.map { it.amount } to ColorOrange
                 ),
-                shape = RoundedCornerShape(12.dp),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(bottom = 12.dp)
+                    .height(130.dp)
             )
+            Spacer(modifier = Modifier.height(12.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                DashboardLegendPill("Income", ColorGreen)
+                DashboardLegendPill("Expenses", ColorRed)
+                DashboardLegendPill("Cash Flow", ColorOrange)
+            }
+        }
+    }
+}
 
-            val filteredTransactions = transactions.filter {
-                !it.status.equals("ignored", ignoreCase = true) && !it.status.equals("duplicate", ignoreCase = true) && (
-                    it.merchant.contains(searchQuery, ignoreCase = true) ||
-                    it.category.contains(searchQuery, ignoreCase = true) ||
-                    it.source.contains(searchQuery, ignoreCase = true) ||
-                    PaymentMethod.labelFor(it.paymentMethod).contains(searchQuery, ignoreCase = true)
+@Composable
+private fun DashboardMiniLineChart(
+    series: List<Pair<List<Float>, Color>>,
+    modifier: Modifier = Modifier
+) {
+    val progress by animateFloatAsState(
+        targetValue = 1f,
+        animationSpec = tween(durationMillis = 700),
+        label = "dashboardMiniLine"
+    )
+    Canvas(modifier = modifier) {
+        val allValues = series.flatMap { it.first }
+        val minValue = allValues.minOrNull() ?: 0f
+        val maxValue = allValues.maxOrNull() ?: 0f
+        val range = (maxValue - minValue).takeIf { it > 0f } ?: 1f
+
+        series.forEach { (values, color) ->
+            if (values.size >= 2) {
+                val path = Path()
+                values.forEachIndexed { index, value ->
+                    val x = (size.width / (values.lastIndex.coerceAtLeast(1))) * index
+                    val y = size.height - (((value - minValue) / range) * size.height)
+                    if (index == 0) {
+                        path.moveTo(x, y)
+                    } else {
+                        path.lineTo(x, y)
+                    }
+                }
+                drawPath(
+                    path = path,
+                    color = color.copy(alpha = 0.88f),
+                    style = Stroke(width = 3.dp.toPx() * progress, cap = androidx.compose.ui.graphics.StrokeCap.Round)
                 )
-            }.sortedByDescending { it.timestamp }
+            }
+        }
+    }
+}
 
-            TransactionTable(filteredTransactions)
+@Composable
+private fun DashboardLegendPill(label: String, color: Color) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Box(
+            modifier = Modifier
+                .size(8.dp)
+                .clip(CircleShape)
+                .background(color)
+        )
+        Spacer(modifier = Modifier.width(6.dp))
+        Text(label, color = ColorText2, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+    }
+}
 
-            Spacer(modifier = Modifier.height(24.dp))
+@Composable
+private fun DashboardAnalyticsBreakdownCard(
+    title: String,
+    items: List<Pair<String, Double>>,
+    emptyText: String
+) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = ColorBg2),
+        shape = RoundedCornerShape(22.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = 5.dp),
+        border = BorderStroke(1.dp, ColorBg3),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(title, color = ColorText1, fontSize = 20.sp, fontWeight = FontWeight.ExtraBold)
+            Spacer(modifier = Modifier.height(12.dp))
+            if (items.isEmpty()) {
+                Text(emptyText, color = ColorText2, fontSize = 13.sp)
+            } else {
+                items.take(5).forEach { (label, amount) ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 7.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            label.ifBlank { "Other" },
+                            color = ColorText1,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Text(
+                            com.autoexpense.app.domain.CashFlowService.formatCompactIndianCurrency(amount),
+                            color = ColorText1,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            softWrap = false
+                        )
+                    }
+                }
+            }
         }
     }
 }

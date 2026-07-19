@@ -1,5 +1,6 @@
 package com.autoexpense.app.notification
 
+import com.autoexpense.app.domain.TransactionType
 import org.junit.Assert.*
 import org.junit.Test
 
@@ -277,7 +278,10 @@ class PaymentNotificationParserTest {
 
     @Test
     fun parse_rejects_credited() {
-        assertNull(PaymentNotificationParser.parse("", "Your account has been credited by Rs. 2,000", messagesPkg, ts))
+        val r = PaymentNotificationParser.parse("", "Your account has been credited by Rs. 2,000", messagesPkg, ts)
+        assertNotNull(r)
+        assertEquals(TransactionType.INCOME, r!!.transactionType)
+        assertEquals(2000.0, r.amount, 0.001)
     }
 
     @Test
@@ -292,7 +296,10 @@ class PaymentNotificationParserTest {
 
     @Test
     fun parse_rejects_cashback() {
-        assertNull(PaymentNotificationParser.parse("", "Rs. 500 cashback credited", messagesPkg, ts))
+        val r = PaymentNotificationParser.parse("", "Rs. 500 cashback credited", messagesPkg, ts)
+        assertNotNull(r)
+        assertEquals(TransactionType.CASHBACK, r!!.transactionType)
+        assertEquals(500.0, r.amount, 0.001)
     }
 
     @Test
@@ -302,7 +309,10 @@ class PaymentNotificationParserTest {
 
     @Test
     fun parse_rejects_received() {
-        assertNull(PaymentNotificationParser.parse("", "You received Rs. 2,000 from Rahul", gpayPkg, ts))
+        val r = PaymentNotificationParser.parse("", "You received Rs. 2,000 from Rahul", gpayPkg, ts)
+        assertNotNull(r)
+        assertEquals(TransactionType.INCOME, r!!.transactionType)
+        assertEquals(2000.0, r.amount, 0.001)
     }
 
     @Test
@@ -312,7 +322,10 @@ class PaymentNotificationParserTest {
 
     @Test
     fun parse_rejects_refund() {
-        assertNull(PaymentNotificationParser.parse("", "Refund of Rs. 200 processed", paytmPkg, ts))
+        val r = PaymentNotificationParser.parse("", "Refund of Rs. 200 processed", paytmPkg, ts)
+        assertNotNull(r)
+        assertEquals(TransactionType.REFUND, r!!.transactionType)
+        assertEquals(200.0, r.amount, 0.001)
     }
 
     @Test
@@ -351,7 +364,10 @@ class PaymentNotificationParserTest {
 
     @Test
     fun parse_ignore_phrase_caseInsensitive() {
-        assertNull(PaymentNotificationParser.parse("", "YOU RECEIVED Rs. 500 FROM RAVI", gpayPkg, ts))
+        val r = PaymentNotificationParser.parse("", "YOU RECEIVED Rs. 500 FROM RAVI", gpayPkg, ts)
+        assertNotNull(r)
+        assertEquals(TransactionType.INCOME, r!!.transactionType)
+        assertEquals(500.0, r.amount, 0.001)
     }
 
     @Test

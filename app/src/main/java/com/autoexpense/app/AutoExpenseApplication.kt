@@ -5,6 +5,7 @@ import com.autoexpense.app.budget.BudgetNotificationHelper
 import com.autoexpense.app.budget.BudgetRepository
 import com.autoexpense.app.budget.BudgetRepositorySingleton
 import com.autoexpense.app.data.AutoExpenseDatabase
+import com.autoexpense.app.domain.FinancialTransactionRepository
 import com.autoexpense.app.notification.SmsPaymentScanner
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -18,6 +19,7 @@ class AutoExpenseApplication : Application() {
         super.onCreate()
         TransactionRepository.init(this)
         val db = AutoExpenseDatabase.getDatabase(this)
+        FinancialTransactionRepository.init(db.financialTransactionDao())
         BudgetRepositorySingleton.init(BudgetRepository(db.budgetDao()))
         com.autoexpense.app.data.BillRepository.init(db.billDao())
         com.autoexpense.app.data.RecurringPaymentRepository.init(db.recurringPaymentDao())

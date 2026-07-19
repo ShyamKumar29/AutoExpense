@@ -1,6 +1,8 @@
 package com.autoexpense.app.notification
 
 import java.util.UUID
+import com.autoexpense.app.domain.TransactionClassificationService
+import com.autoexpense.app.domain.TransactionType
 
 /**
  * Stateless parser for payment notifications.
@@ -185,6 +187,13 @@ object PaymentNotificationParser {
         if (fullText.isBlank()) return null
 
         val lower = fullText.lowercase()
+        val classifiedType = TransactionClassificationService.classifyNotificationText(fullText)
+        if (classifiedType != TransactionType.UNKNOWN &&
+            classifiedType != TransactionType.EXPENSE &&
+            classifiedType != TransactionType.CREDIT_CARD_PURCHASE
+        ) {
+            return parseClassifiedFinancialEvent(fullText, packageName, timestamp, classifiedType)
+        }
 
         // Step 1 – global ignore list (always wins)
         if (IGNORE_PHRASES.any { lower.contains(it) }) return null
@@ -197,6 +206,46 @@ object PaymentNotificationParser {
         } else {
             parseUpiApp(fullText, lower, packageName, knownSource, timestamp)
         }
+    }
+
+    private fun parseClassifiedFinancialEvent(
+        fullText: String,
+        packageName: String,
+        timestamp: Long,
+        transactionType: TransactionType
+    ): ParsedPayment? {
+        val amount = extractAmountBankSms(fullText) ?: extractAmount(fullText) ?: return null
+        if (amount <= 0.0) return null
+        val bank = KnownBanks.detect(fullText)
+        val source = SupportedPaymentSources.findSource(packageName)
+        val counterparty = extractMerchantBankSms(fullText)
+            ?: extractMerchant(fullText)
+            ?: when (transactionType) {
+                TransactionType.INCOME -> "Income"
+                TransactionType.REFUND -> "Refund"
+                TransactionType.CASHBACK -> "Cashback"
+                TransactionType.INTEREST -> "Interest"
+                TransactionType.TRANSFER -> "Transfer"
+                else -> "Unknown Merchant"
+            }
+        val sourceDisplay = bank?.let { "${it.displayName} Bank SMS" }
+            ?: source?.displayName
+            ?: if (packageName.isNotBlank()) packageName else "Unknown Source"
+        return ParsedPayment(
+            id = UUID.randomUUID().toString(),
+            amount = amount,
+            currency = "INR",
+            merchantOrRecipient = counterparty,
+            sourceApplication = sourceDisplay,
+            sourcePackage = packageName,
+            timestamp = timestamp,
+            safeNotificationExcerpt = maskedExcerpt(fullText),
+            confidence = if (bank != null || source != null) PaymentConfidence.HIGH else PaymentConfidence.MEDIUM,
+            detectionReason = "Financial event classified as ${transactionType.name}",
+            bankRefNumber = extractBankRef(fullText),
+            paymentMethod = PaymentMethodDetector.detect("", fullText, packageName),
+            transactionType = transactionType
+        )
     }
 
     internal fun rejectionReason(
@@ -270,7 +319,8 @@ object PaymentNotificationParser {
             safeNotificationExcerpt = maskedExcerpt(fullText),
             confidence = confidence,
             detectionReason = "Outgoing payment phrase detected: \"$matchedPhrase\"",
-            paymentMethod = PaymentMethodDetector.detect("", fullText, packageName)
+            paymentMethod = PaymentMethodDetector.detect("", fullText, packageName),
+            transactionType = TransactionClassificationService.classifyNotificationText(fullText)
         )
     }
 
@@ -314,7 +364,8 @@ object PaymentNotificationParser {
             confidence = confidence,
             detectionReason = "Outgoing bank debit notification detected",
             bankRefNumber = bankRef,
-            paymentMethod = PaymentMethodDetector.detect("", fullText, packageName)
+            paymentMethod = PaymentMethodDetector.detect("", fullText, packageName),
+            transactionType = TransactionClassificationService.classifyNotificationText(fullText)
         )
     }
 

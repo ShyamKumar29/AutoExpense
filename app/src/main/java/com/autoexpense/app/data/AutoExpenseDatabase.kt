@@ -16,13 +16,15 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         MerchantAliasEntity::class,
         PaymentInstrumentEntity::class,
         BillEntity::class,
-        RecurringPaymentEntity::class
+        RecurringPaymentEntity::class,
+        FinancialTransactionEntity::class
     ],
-    version = 8,
+    version = 9,
     exportSchema = false
 )
 abstract class AutoExpenseDatabase : RoomDatabase() {
     abstract fun transactionDao(): TransactionDao
+    abstract fun financialTransactionDao(): FinancialTransactionDao
     abstract fun budgetDao(): BudgetDao
     abstract fun customCategoryDao(): CustomCategoryDao
     abstract fun merchantCategoryDao(): MerchantCategoryDao
@@ -191,6 +193,142 @@ abstract class AutoExpenseDatabase : RoomDatabase() {
             }
         }
 
+        /** Adds the unified financial transaction table while preserving the existing expense table. */
+        private val MIGRATION_8_9 = object : Migration(8, 9) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `financial_transactions` (
+                        `id` TEXT NOT NULL,
+                        `transactionType` TEXT NOT NULL,
+                        `amount` REAL NOT NULL,
+                        `currency` TEXT NOT NULL,
+                        `title` TEXT NOT NULL,
+                        `category` TEXT NOT NULL,
+                        `subCategory` TEXT NOT NULL,
+                        `merchant` TEXT NOT NULL,
+                        `accountId` TEXT,
+                        `paymentMethod` TEXT NOT NULL,
+                        `referenceNumber` TEXT NOT NULL,
+                        `notes` TEXT NOT NULL,
+                        `date` INTEGER NOT NULL,
+                        `createdAt` INTEGER NOT NULL,
+                        `updatedAt` INTEGER NOT NULL,
+                        `location` TEXT NOT NULL,
+                        `tags` TEXT NOT NULL,
+                        `isRecurring` INTEGER NOT NULL,
+                        `isAutoDetected` INTEGER NOT NULL,
+                        `smsBody` TEXT NOT NULL,
+                        `notificationSource` TEXT NOT NULL,
+                        `metadata` TEXT NOT NULL,
+                        `isDeleted` INTEGER NOT NULL,
+                        `budgetId` INTEGER,
+                        `billId` TEXT,
+                        `subscriptionId` TEXT,
+                        `creditCardId` TEXT,
+                        `status` TEXT NOT NULL,
+                        PRIMARY KEY(`id`)
+                    )
+                    """.trimIndent()
+                )
+                database.execSQL(
+                    """
+                    INSERT OR IGNORE INTO `financial_transactions` (
+                        `id`,
+                        `transactionType`,
+                        `amount`,
+                        `currency`,
+                        `title`,
+                        `category`,
+                        `subCategory`,
+                        `merchant`,
+                        `accountId`,
+                        `paymentMethod`,
+                        `referenceNumber`,
+                        `notes`,
+                        `date`,
+                        `createdAt`,
+                        `updatedAt`,
+                        `location`,
+                        `tags`,
+                        `isRecurring`,
+                        `isAutoDetected`,
+                        `smsBody`,
+                        `notificationSource`,
+                        `metadata`,
+                        `isDeleted`,
+                        `budgetId`,
+                        `billId`,
+                        `subscriptionId`,
+                        `creditCardId`,
+                        `status`
+                    )
+                    SELECT
+                        `id`,
+                        CASE
+                            WHEN `amount` LIKE '+%' THEN 'INCOME'
+                            WHEN lower(`status`) = 'incoming' THEN 'INCOME'
+                            WHEN lower(`status`) = 'refund' THEN 'REFUND'
+                            ELSE 'EXPENSE'
+                        END,
+                        CAST(
+                            replace(
+                                replace(
+                                    replace(
+                                        replace(
+                                            replace(
+                                                replace(
+                                                    replace(`amount`, char(8377), ''),
+                                                    char(226,130,185),
+                                                    ''
+                                                ),
+                                                char(8722),
+                                                ''
+                                            ),
+                                            char(226,136,146),
+                                            ''
+                                        ),
+                                        '-',
+                                        ''
+                                    ),
+                                    '+',
+                                    ''
+                                ),
+                                ',',
+                                ''
+                            ) AS REAL
+                        ),
+                        CASE WHEN `currency` = '' THEN 'INR' ELSE `currency` END,
+                        `merchantOrRecipient`,
+                        `category`,
+                        '',
+                        `merchantOrRecipient`,
+                        NULL,
+                        `paymentMethod`,
+                        replace(`transactionFingerprint`, 'ref|', ''),
+                        `note`,
+                        `timestamp`,
+                        `createdAt`,
+                        `updatedAt`,
+                        '',
+                        '',
+                        0,
+                        CASE WHEN `safeNotificationExcerpt` != '' OR `detectionReason` != '' THEN 1 ELSE 0 END,
+                        '',
+                        `source`,
+                        'fingerprint=' || `transactionFingerprint`,
+                        0,
+                        NULL,
+                        NULL,
+                        NULL,
+                        NULL,
+                        `status`
+                    FROM `transactions`
+                    """.trimIndent()
+                )
+            }
+        }
+
         fun getDatabase(context: Context): AutoExpenseDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -205,7 +343,8 @@ abstract class AutoExpenseDatabase : RoomDatabase() {
                         MIGRATION_4_5,
                         MIGRATION_5_6,
                         MIGRATION_6_7,
-                        MIGRATION_7_8
+                        MIGRATION_7_8,
+                        MIGRATION_8_9
                     )
                     .build()
                 INSTANCE = instance
