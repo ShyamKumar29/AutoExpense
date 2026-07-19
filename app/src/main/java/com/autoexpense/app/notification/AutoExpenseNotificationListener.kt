@@ -59,28 +59,6 @@ class AutoExpenseNotificationListener : NotificationListenerService() {
             Log.d(TAG, "handlePostedNotification reason=$reason pkg=${sbn.packageName}")
         }
 
-        if (sbn.id == NotificationHealthRepository.TEST_NOTIFICATION_ID && sbn.packageName == applicationContext.packageName) {
-            if (BuildConfig.DEBUG) {
-                Log.d(TAG, "handlePostedNotification: test notification detected")
-            }
-            NotificationHealthRepository.recordNotificationHeartbeat(applicationContext)
-            NotificationHealthRepository.onTestNotificationDetected()
-            try {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-                    cancelNotification(sbn.key)
-                } else {
-                    @Suppress("DEPRECATION")
-                    cancelNotification(sbn.packageName, sbn.tag, sbn.id)
-                }
-            } catch (_: Exception) {
-                try {
-                    val nm = applicationContext.getSystemService(android.content.Context.NOTIFICATION_SERVICE) as? android.app.NotificationManager
-                    nm?.cancel(NotificationHealthRepository.TEST_NOTIFICATION_ID)
-                } catch (_: Exception) {}
-            }
-            return
-        }
-
         serviceScope.launch {
             NotificationHealthRepository.recordNotificationHeartbeat(applicationContext)
             NotificationProcessor.process(sbn, applicationContext, isRecoverySweep = reason != "posted")

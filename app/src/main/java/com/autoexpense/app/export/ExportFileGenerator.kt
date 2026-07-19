@@ -111,7 +111,7 @@ object ExportFileGenerator {
         val summary = ExportFilterHelper.calculateSummary(transactions, periodText)
         val exportDate = SimpleDateFormat("d MMM yyyy, h:mm a", Locale.US).format(Date())
 
-        canvas.drawText("AUTOEXPENSE", margin, yPos, paintTitle)
+        canvas.drawText("ZORS", margin, yPos, paintTitle)
         yPos += 20f
         canvas.drawText("Financial Report", margin, yPos, paintSubtitle)
         yPos += 16f
@@ -323,7 +323,7 @@ object ExportFileGenerator {
                 val values = ContentValues().apply {
                     put(MediaStore.MediaColumns.DISPLAY_NAME, filename)
                     put(MediaStore.MediaColumns.MIME_TYPE, mimeType)
-                    put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/AutoExpense")
+                    put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/Zors")
                 }
                 val resolver = context.contentResolver
                 val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)

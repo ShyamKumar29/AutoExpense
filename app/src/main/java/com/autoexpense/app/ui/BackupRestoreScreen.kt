@@ -83,7 +83,7 @@ fun BackupRestoreScreen(
                         }
                     }
                 } catch (e: Exception) {
-                    errorMessage = "This is not a valid AutoExpense backup."
+                    errorMessage = "This is not a valid Zors backup."
                 } finally {
                     isLoading = false
                 }
@@ -171,7 +171,7 @@ fun BackupRestoreScreen(
                     }
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        text = "Save a complete copy of your AutoExpense data to a file on this device.",
+                        text = "Save a complete copy of your Zors data to a file on this device.",
                         fontSize = 13.sp,
                         color = ColorText2
                     )
@@ -217,7 +217,7 @@ fun BackupRestoreScreen(
                     }
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        text = "Restore transactions, budgets, categories, merchant memories, aliases, and app preferences from an AutoExpense backup.",
+                        text = "Restore transactions, budgets, categories, merchant memories, aliases, and app preferences from a Zors backup.",
                         fontSize = 13.sp,
                         color = ColorText2
                     )
@@ -294,7 +294,7 @@ fun BackupRestoreScreen(
         AlertDialog(
             onDismissRequest = { if (!isLoading) pendingRestoreBackup = null },
             title = {
-                Text(text = "Restore AutoExpense backup?", fontWeight = FontWeight.Bold, color = ColorText1)
+                Text(text = "Restore Zors backup?", fontWeight = FontWeight.Bold, color = ColorText1)
             },
             text = {
                 Column {
@@ -311,7 +311,7 @@ fun BackupRestoreScreen(
                     Text("Custom categories: $categoriesCount", fontSize = 13.sp, color = ColorText2)
                     Spacer(modifier = Modifier.height(14.dp))
                     Text(
-                        text = "This will replace the AutoExpense data currently stored on this device. This action cannot be undone.",
+                        text = "This will replace the Zors data currently stored on this device. This action cannot be undone.",
                         fontSize = 13.sp,
                         fontWeight = FontWeight.Bold,
                         color = ColorRed

@@ -171,7 +171,7 @@ fun PaymentDetectionSetupScreen(
 
         Column(modifier = Modifier.padding(16.dp)) {
             Text(
-                text = "AutoExpense uses payment notifications first. Optional SMS access can recover bank debit messages when the SMS app or Truecaller does not show a notification.",
+                text = "Zors uses payment notifications first. Optional SMS access can recover bank debit messages when the SMS app or Truecaller does not show a notification.",
                 fontSize = 14.sp,
                 color = ColorText2,
                 modifier = Modifier.padding(bottom = 20.dp),
@@ -282,7 +282,7 @@ fun PaymentDetectionSetupScreen(
 
                     Spacer(modifier = Modifier.height(6.dp))
                     Text(
-                        text = "Optional. AutoExpense reads bank debit SMS locally to detect payments when no SMS or Truecaller notification appears. It stores only parsed transaction details and masked excerpts.",
+                        text = "Optional. Zors reads bank debit SMS locally to detect payments when no SMS or Truecaller notification appears. It stores only parsed transaction details and masked excerpts.",
                         fontSize = 13.sp,
                         color = ColorText2,
                         lineHeight = 18.sp
@@ -369,7 +369,7 @@ fun PaymentDetectionSetupScreen(
 
                     Spacer(modifier = Modifier.height(6.dp))
                     Text(
-                        text = "Allow AutoExpense to continue detecting payments while the app is closed.",
+                        text = "Allow Zors to continue detecting payments while the app is closed.",
                         fontSize = 13.sp,
                         color = ColorText2,
                         lineHeight = 18.sp
@@ -444,7 +444,7 @@ fun PaymentDetectionSetupScreen(
                             )
                             Spacer(modifier = Modifier.width(10.dp))
                             Text(
-                                text = "Allow AutoExpense to start automatically",
+                                text = "Allow Zors to start automatically",
                                 fontSize = 16.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = ColorText1,
@@ -524,7 +524,7 @@ fun PaymentDetectionSetupScreen(
                             horizontalAlignment = Alignment.CenterHorizontally
                         ) {
                             Text(
-                                text = "AutoExpense is ready",
+                                text = "Zors is ready",
                                 fontSize = 16.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = ColorGreen

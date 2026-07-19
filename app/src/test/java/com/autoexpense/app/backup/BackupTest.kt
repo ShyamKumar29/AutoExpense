@@ -158,10 +158,58 @@ class BackupTest {
     }
 
     @Test
+    fun unifiedFinancialTransactionsRoundTripWithoutLoss() {
+        val unifiedIncome = FinancialTransactionBackupDto(
+            id = "income_1",
+            transactionType = "INCOME",
+            amount = 45000.0,
+            currency = "INR",
+            title = "Acme Payroll",
+            category = "Salary",
+            subCategory = "",
+            merchant = "Acme Payroll",
+            accountId = null,
+            paymentMethod = "BANK",
+            referenceNumber = "SAL-2026-07",
+            notes = "July salary",
+            date = 1721070000000L,
+            createdAt = 1721070000000L,
+            updatedAt = 1721070000000L,
+            location = "",
+            tags = "salary,monthly",
+            isRecurring = true,
+            isAutoDetected = false,
+            smsBody = "",
+            notificationSource = "manual",
+            metadata = "source=manual",
+            isDeleted = false,
+            budgetId = null,
+            billId = null,
+            subscriptionId = null,
+            creditCardId = null,
+            status = "confirmed"
+        )
+        val sample = createSampleBackupDto().copy(
+            schemaVersion = 3,
+            data = createSampleBackupDto().data.copy(financialTransactions = listOf(unifiedIncome))
+        )
+
+        val result = BackupCodec.parseAndValidate(BackupCodec.toJson(sample))
+
+        assertTrue(result is RestoreValidationResult.Success)
+        val restored = (result as RestoreValidationResult.Success).backup.data.financialTransactions.single()
+        assertEquals("INCOME", restored.transactionType)
+        assertEquals("Acme Payroll", restored.title)
+        assertEquals("SAL-2026-07", restored.referenceNumber)
+        assertEquals("salary,monthly", restored.tags)
+        assertTrue(restored.isRecurring)
+    }
+
+    @Test
     fun testInvalidJson() {
         val result = BackupCodec.parseAndValidate("{ malformed json : ")
         assertTrue(result is RestoreValidationResult.Error)
-        assertEquals("This is not a valid AutoExpense backup.", (result as RestoreValidationResult.Error).userMessage)
+        assertEquals("This is not a valid Zors backup.", (result as RestoreValidationResult.Error).userMessage)
     }
 
     @Test
@@ -170,7 +218,7 @@ class BackupTest {
         val result2 = BackupCodec.parseAndValidate("   ")
         assertTrue(result1 is RestoreValidationResult.Error)
         assertTrue(result2 is RestoreValidationResult.Error)
-        assertEquals("This is not a valid AutoExpense backup.", (result1 as RestoreValidationResult.Error).userMessage)
+        assertEquals("This is not a valid Zors backup.", (result1 as RestoreValidationResult.Error).userMessage)
     }
 
     @Test
@@ -179,21 +227,21 @@ class BackupTest {
         val json = BackupCodec.toJson(sample).replace("\"AutoExpense\"", "\"WrongApp\"")
         val result = BackupCodec.parseAndValidate(json)
         assertTrue(result is RestoreValidationResult.Error)
-        assertEquals("This is not a valid AutoExpense backup.", (result as RestoreValidationResult.Error).userMessage)
+        assertEquals("This is not a valid Zors backup.", (result as RestoreValidationResult.Error).userMessage)
     }
 
     @Test
     fun testUnsupportedOlderAndNewerSchemaHandling() {
         val sample = createSampleBackupDto()
-        val jsonNewer = BackupCodec.toJson(sample).replace("\"schemaVersion\": 1", "\"schemaVersion\": 3")
+        val jsonNewer = BackupCodec.toJson(sample).replace("\"schemaVersion\": 1", "\"schemaVersion\": 4")
         val resultNewer = BackupCodec.parseAndValidate(jsonNewer)
         assertTrue(resultNewer is RestoreValidationResult.Error)
-        assertEquals("This backup was created by a newer version of AutoExpense. Update the app before restoring it.", (resultNewer as RestoreValidationResult.Error).userMessage)
+        assertEquals("This backup was created by a newer version of Zors. Update the app before restoring it.", (resultNewer as RestoreValidationResult.Error).userMessage)
 
         val jsonOlder = BackupCodec.toJson(sample).replace("\"schemaVersion\": 1", "\"schemaVersion\": 0")
         val resultOlder = BackupCodec.parseAndValidate(jsonOlder)
         assertTrue(resultOlder is RestoreValidationResult.Error)
-        assertEquals("This is not a valid AutoExpense backup.", (resultOlder as RestoreValidationResult.Error).userMessage)
+        assertEquals("This is not a valid Zors backup.", (resultOlder as RestoreValidationResult.Error).userMessage)
     }
 
     @Test
@@ -202,7 +250,7 @@ class BackupTest {
         val jsonMissingData = BackupCodec.toJson(sample).replace("\"data\": {", "\"corrupted_data\": {")
         val result = BackupCodec.parseAndValidate(jsonMissingData)
         assertTrue(result is RestoreValidationResult.Error)
-        assertEquals("This is not a valid AutoExpense backup.", (result as RestoreValidationResult.Error).userMessage)
+        assertEquals("This is not a valid Zors backup.", (result as RestoreValidationResult.Error).userMessage)
     }
 
     @Test
@@ -210,6 +258,6 @@ class BackupTest {
         val corruptedJson = "{\"backupFormat\":\"AutoExpense\",\"schemaVersion\":1,\"data\":{}}"
         val result = BackupCodec.parseAndValidate(corruptedJson)
         assertTrue("Validation must fail cleanly before any restore logic is executed", result is RestoreValidationResult.Error)
-        assertEquals("This is not a valid AutoExpense backup.", (result as RestoreValidationResult.Error).userMessage)
+        assertEquals("This is not a valid Zors backup.", (result as RestoreValidationResult.Error).userMessage)
     }
 }

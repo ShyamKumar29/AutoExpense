@@ -712,7 +712,7 @@ private fun BudgetEditorSheet(
         ) {
             Text(if (existingBudget == null) "Create Budget" else "Edit Budget", color = ColorText1, fontSize = 24.sp, fontWeight = FontWeight.ExtraBold)
             Spacer(modifier = Modifier.height(6.dp))
-            Text("Set a spending limit and AutoExpense will track progress automatically.", color = ColorText2, fontSize = 14.sp)
+            Text("Set a spending limit and Zors will track progress automatically.", color = ColorText2, fontSize = 14.sp)
             Spacer(modifier = Modifier.height(20.dp))
 
             Text("Budget Type", color = ColorText2, fontSize = 13.sp, fontWeight = FontWeight.Bold)

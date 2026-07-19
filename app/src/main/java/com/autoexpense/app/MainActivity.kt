@@ -97,7 +97,6 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.outlined.NotificationsOff
-import com.autoexpense.app.notification.NotificationProcessor
 import com.autoexpense.app.data.AutoExpenseDatabase
 import com.autoexpense.app.data.TransactionDao
 import com.autoexpense.app.data.TransactionEntity
@@ -120,6 +119,9 @@ import com.autoexpense.app.budget.BudgetScreen
 import com.autoexpense.app.ui.SettingsScreen
 import com.autoexpense.app.ui.PaymentDetectionSetupScreen
 import com.autoexpense.app.ui.AppHaptic
+import com.autoexpense.app.ui.BudgetPreferencesSection
+import com.autoexpense.app.ui.DataManagementSection
+import com.autoexpense.app.ui.PaymentDetectionSection
 import com.autoexpense.app.ui.components.AeGradientCard
 import com.autoexpense.app.ui.theme.AeGradients
 import com.autoexpense.app.notification.SmartPaymentsFeedback
@@ -313,7 +315,7 @@ object TransactionRepository {
 
     /** Insert a newly detected transaction at the top of the list (Phase 2). */
     fun addTransaction(t: Transaction) {
-        // Kept for fallback, but NotificationProcessor will use addTransactionEntity
+        // Kept for legacy fallback callers.
     }
 
     fun approveAll(suggestions: Map<String, String>, onComplete: (() -> Unit)? = null) {
@@ -913,7 +915,6 @@ class ProfileViewModel : ViewModel() {
 
     val isReconnecting: StateFlow<Boolean> = com.autoexpense.app.notification.NotificationHealthRepository.isReconnecting
     val reconnectStatusMessage: StateFlow<String?> = com.autoexpense.app.notification.NotificationHealthRepository.reconnectStatusMessage
-    val testDetectionStatus: StateFlow<String?> = com.autoexpense.app.notification.NotificationHealthRepository.testDetectionStatus
 
     init {
         viewModelScope.launch {
@@ -947,14 +948,6 @@ class ProfileViewModel : ViewModel() {
 
     fun clearReconnectStatusMessage() {
         com.autoexpense.app.notification.NotificationHealthRepository.clearReconnectStatusMessage()
-    }
-
-    fun runTestDetection(context: Context) {
-        com.autoexpense.app.notification.NotificationHealthRepository.runTestDetection(context)
-    }
-
-    fun clearTestDetectionStatus() {
-        com.autoexpense.app.notification.NotificationHealthRepository.clearTestDetectionStatus()
     }
 
     private fun isNotificationListenerEnabled(context: Context): Boolean {
@@ -1143,11 +1136,28 @@ fun MainAppContainer(
                             focusSuggestionsOnOpen = launchFocusSuggestions
                         )
                         "profile" -> ProfileScreen(
+                            userPrefs = userPrefs,
                             viewModel = profileViewModel,
                             onNavigateBack = { activeScreen = "dashboard" },
                             onNavigateToSettings = {
                                 settingsReturnScreen = "profile"
                                 activeScreen = "settings"
+                            },
+                            onOpenPaymentSetup = {
+                                settingsReturnScreen = "profile"
+                                activeScreen = "payment_setup"
+                            },
+                            onOpenExport = {
+                                settingsReturnScreen = "profile"
+                                activeScreen = "export"
+                            },
+                            onOpenBackupRestore = {
+                                settingsReturnScreen = "profile"
+                                activeScreen = "backup_restore"
+                            },
+                            onDataCleared = {
+                                setupCardDismissed = false
+                                activeScreen = "dashboard"
                             }
                         )
                         "settings" -> {
@@ -1159,15 +1169,7 @@ fun MainAppContainer(
                             }
                             SettingsScreen(
                                 userPrefs = userPrefs,
-                                profileViewModel = profileViewModel,
-                                onNavigateBack = { activeScreen = settingsReturnScreen },
-                                onOpenPaymentSetup = { activeScreen = "payment_setup" },
-                                onOpenExport = { activeScreen = "export" },
-                                onOpenBackupRestore = { activeScreen = "backup_restore" },
-                                onDataCleared = {
-                                    setupCardDismissed = false
-                                    activeScreen = "dashboard"
-                                }
+                                onNavigateBack = { activeScreen = settingsReturnScreen }
                             )
                         }
                         "payment_setup" -> PaymentDetectionSetupScreen(
@@ -1175,18 +1177,18 @@ fun MainAppContainer(
                                 AppHaptic.trigger(context)
                                 scope.launch {
                                     userPrefs.completePaymentSetup()
-                                    activeScreen = "settings"
+                                    activeScreen = settingsReturnScreen
                                 }
                             },
                             isReviewMode = true,
-                            onNavigateBack = { activeScreen = "settings" }
+                            onNavigateBack = { activeScreen = settingsReturnScreen }
                         )
                         "export" -> com.autoexpense.app.export.ExportScreen(
                             viewModel = exportViewModel,
-                            onBackToDashboard = { activeScreen = "dashboard" }
+                            onBackToDashboard = { activeScreen = settingsReturnScreen }
                         )
                         "backup_restore" -> com.autoexpense.app.ui.BackupRestoreScreen(
-                            onNavigateBack = { activeScreen = "settings" },
+                            onNavigateBack = { activeScreen = settingsReturnScreen },
                             onRestoreCompleted = {
                                 (context as? android.app.Activity)?.recreate()
                             }
@@ -5840,7 +5842,7 @@ fun NotificationSetupCard(
             }
             Spacer(modifier = Modifier.height(4.dp))
             Text(
-                "Allow AutoExpense to detect payment notifications from supported payment applications.",
+                "Allow Zors to detect payment notifications from supported payment applications.",
                 fontSize = 12.sp,
                 color = ColorText2
             )
@@ -5885,11 +5887,11 @@ fun DeviceReliabilityGuidanceCard(isHealthy: Boolean) {
         manufacturer.contains("xiaomi") || manufacturer.contains("redmi") || manufacturer.contains("poco") ->
             "Enable 'Autostart' and set Battery Saver to 'No restrictions' in phone Settings so payment detection keeps running in the background."
         manufacturer.contains("samsung") ->
-            "Remove AutoExpense from 'Sleeping apps' and 'Deep sleeping apps' in Device Care > Battery settings."
+            "Remove Zors from 'Sleeping apps' and 'Deep sleeping apps' in Device Care > Battery settings."
         manufacturer.contains("oneplus") || manufacturer.contains("oppo") || manufacturer.contains("realme") ->
-            "Allow background activity and disable aggressive battery optimization for AutoExpense in phone Settings."
+            "Allow background activity and disable aggressive battery optimization for Zors in phone Settings."
         else ->
-            "Disable aggressive background battery optimization or task cleanup for AutoExpense in phone Settings."
+            "Disable aggressive background battery optimization or task cleanup for Zors in phone Settings."
     }
 
     Spacer(modifier = Modifier.height(12.dp))
@@ -5928,57 +5930,22 @@ fun DeviceReliabilityGuidanceCard(isHealthy: Boolean) {
 // ── PROFILE SCREEN (Phase 2) ──────────────────────────────────────────────────
 @Composable
 fun ProfileScreen(
+    userPrefs: com.autoexpense.app.data.UserPreferencesRepository,
     viewModel: ProfileViewModel,
     onNavigateBack: () -> Unit,
-    onNavigateToSettings: () -> Unit = {}
+    onNavigateToSettings: () -> Unit = {},
+    onOpenPaymentSetup: () -> Unit,
+    onOpenExport: () -> Unit,
+    onOpenBackupRestore: () -> Unit,
+    onDataCleared: () -> Unit
 ) {
     val context = LocalContext.current
-    val lifecycleOwner = LocalLifecycleOwner.current
-    val notificationEnabled by viewModel.notificationAccessEnabled.collectAsState()
-    val rawListenerStatus by viewModel.listenerStatus.collectAsState()
-    val lastPaymentText by viewModel.lastPaymentDetectedText.collectAsState()
-    val isReconnecting by viewModel.isReconnecting.collectAsState()
-    val reconnectMessage by viewModel.reconnectStatusMessage.collectAsState()
-
-    // Refresh permission status every time this screen resumes (after returning from Settings).
-    DisposableEffect(lifecycleOwner) {
-        val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) {
-                viewModel.refreshPermissionStatus(context)
-                viewModel.checkStatus(context)
-            }
-        }
-        lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
-    }
-
-    LaunchedEffect(Unit) {
-        viewModel.refreshPermissionStatus(context)
-        viewModel.checkStatus(context)
-    }
-
-    // Determine status and health based on exact user requirements
-    val displayAccessText = if (notificationEnabled) "Enabled" else "Disabled"
-    val displayListenerStatus = if (notificationEnabled) rawListenerStatus else "Inactive"
-    val isAccessHealthy = notificationEnabled
-    val isListenerHealthy = notificationEnabled && displayListenerStatus == "Active"
-    val isOverallHealthy = isAccessHealthy && isListenerHealthy
-
-    // Expandable row state inside the card
-    var expanded by remember { mutableStateOf(false) }
-    val chevronRotation by animateFloatAsState(
-        targetValue = if (expanded) 180f else 0f,
-        animationSpec = tween(durationMillis = 250),
-        label = "chevronRotation"
-    )
-
     Column(
         modifier = Modifier
             .fillMaxSize()
             .background(ColorBg0)
             .verticalScroll(rememberScrollState())
     ) {
-        // Top bar
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -5992,345 +5959,24 @@ fun ProfileScreen(
                     .background(ColorOrangeDim, RoundedCornerShape(8.dp)),
                 contentAlignment = Alignment.Center
             ) {
-                Icon(
-                    Icons.Default.Person,
-                    contentDescription = null,
-                    tint = ColorOrange,
-                    modifier = Modifier.size(20.dp)
-                )
+                Icon(Icons.Default.Person, contentDescription = null, tint = ColorOrange, modifier = Modifier.size(20.dp))
             }
             Spacer(modifier = Modifier.width(8.dp))
-            Text(
-                "Profile",
-                fontWeight = FontWeight.Bold,
-                color = ColorText1,
-                fontSize = 24.sp,
-                modifier = Modifier.weight(1f)
-            )
+            Text("Profile", fontWeight = FontWeight.Bold, color = ColorText1, fontSize = 24.sp, modifier = Modifier.weight(1f))
             IconButton(
-                onClick = {
-                    AppHaptic.trigger(context)
-                    onNavigateToSettings()
-                },
+                onClick = { AppHaptic.trigger(context); onNavigateToSettings() },
                 modifier = Modifier.size(36.dp)
             ) {
-                Icon(
-                    Icons.Outlined.Settings,
-                    contentDescription = "Settings",
-                    tint = ColorText1,
-                    modifier = Modifier.size(22.dp)
-                )
+                Icon(Icons.Outlined.Settings, contentDescription = "Settings", tint = ColorText1, modifier = Modifier.size(22.dp))
             }
         }
-
         Column(modifier = Modifier.padding(16.dp)) {
-
-            // ── Payment Detection section ────────────────────────────────
-            Text(
-                "PAYMENT DETECTION",
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Bold,
-                color = ColorText3,
-                modifier = Modifier.padding(bottom = 8.dp)
-            )
-
-            Card(
-                colors = CardDefaults.cardColors(containerColor = ColorBg2),
-                shape = RoundedCornerShape(12.dp),
-                border = BorderStroke(1.dp, ColorBg3),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .animateContentSize(animationSpec = tween(durationMillis = 250))
-            ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    // 1. Notification Access
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text("Notification Access", fontSize = 13.sp, color = ColorText2, modifier = Modifier.weight(1f))
-                        if (isAccessHealthy) {
-                            Icon(imageVector = Icons.Default.CheckCircle, contentDescription = null, tint = ColorGreen, modifier = Modifier.size(16.dp))
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text("Enabled", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = ColorGreen)
-                        } else {
-                            Icon(imageVector = Icons.Outlined.NotificationsOff, contentDescription = null, tint = ColorAmber, modifier = Modifier.size(16.dp))
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text("Disabled", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = ColorAmber)
-                        }
-                    }
-
-                    HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp), color = ColorBg3)
-
-                    // 2. Listener Status (Entire row is tappable to expand/collapse dropdown inside the same card)
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { expanded = !expanded }
-                            .padding(vertical = 2.dp)
-                    ) {
-                        Text("Listener Status", fontSize = 13.sp, color = ColorText2, modifier = Modifier.weight(1f))
-                        val statusColor = when {
-                            !notificationEnabled -> ColorText3
-                            displayListenerStatus == "Active" -> ColorGreen
-                            displayListenerStatus == "Reconnecting" -> ColorBlue
-                            else -> ColorAmber
-                        }
-                        Box(
-                            modifier = Modifier
-                                .background(statusColor.copy(alpha = 0.15f), RoundedCornerShape(12.dp))
-                                .padding(horizontal = 8.dp, vertical = 3.dp)
-                        ) {
-                            Text(displayListenerStatus, fontSize = 12.sp, fontWeight = FontWeight.Bold, color = statusColor)
-                        }
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Icon(
-                            imageVector = Icons.Default.KeyboardArrowDown,
-                            contentDescription = "Expand details",
-                            tint = ColorText2,
-                            modifier = Modifier
-                                .size(18.dp)
-                                .rotate(chevronRotation)
-                        )
-                    }
-
-                    // Expanded section dropdown inside exact same card
-                    AnimatedVisibility(
-                        visible = expanded,
-                        enter = expandVertically(animationSpec = tween(250)) + fadeIn(animationSpec = tween(250)),
-                        exit = shrinkVertically(animationSpec = tween(250)) + fadeOut(animationSpec = tween(250))
-                    ) {
-                        Column(modifier = Modifier.fillMaxWidth().padding(top = 12.dp)) {
-                            HorizontalDivider(color = ColorBg3, modifier = Modifier.padding(bottom = 12.dp))
-
-                            Text("Last payment detected", fontSize = 12.sp, color = ColorText3)
-                            Spacer(modifier = Modifier.height(3.dp))
-                            val paymentDisplay = if (lastPaymentText.isBlank() || lastPaymentText.contains("No payments", ignoreCase = true)) {
-                                "No payments detected yet."
-                            } else {
-                                lastPaymentText
-                            }
-                            Text(paymentDisplay, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = ColorText1)
-
-                            Spacer(modifier = Modifier.height(10.dp))
-                            val statusMsg = when {
-                                !notificationEnabled -> "No payments detected yet."
-                                displayListenerStatus == "Active" -> "Payment detection is working normally."
-                                else -> if (reconnectMessage != null && reconnectMessage!!.isNotBlank()) reconnectMessage!! else "Payment detection requires attention."
-                            }
-                            val statusMsgColor = if (isListenerHealthy) ColorGreen else if (!notificationEnabled) ColorText2 else ColorAmber
-                            Text(statusMsg, fontSize = 12.sp, color = statusMsgColor)
-
-                            // Show "Enable Notification Access" button ONLY in disabled state
-                            if (!notificationEnabled) {
-                                Spacer(modifier = Modifier.height(14.dp))
-                                Button(
-                                    onClick = {
-                                        context.startActivity(android.content.Intent(android.provider.Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
-                                    },
-                                    colors = ButtonDefaults.buttonColors(containerColor = ColorOrange),
-                                    shape = RoundedCornerShape(6.dp),
-                                    modifier = Modifier.fillMaxWidth().height(38.dp)
-                                ) {
-                                    Text("Enable Notification Access", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.White)
-                                }
-                            } else if (!isListenerHealthy) {
-                                // Buttons Check Status / Reconnect Listener removed from normal healthy state, shown when recovery is needed
-                                Spacer(modifier = Modifier.height(14.dp))
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                ) {
-                                    OutlinedButton(
-                                        onClick = { viewModel.checkStatus(context) },
-                                        border = BorderStroke(1.dp, ColorBg3),
-                                        colors = ButtonDefaults.outlinedButtonColors(contentColor = ColorText2),
-                                        shape = RoundedCornerShape(6.dp),
-                                        modifier = Modifier.weight(1f).height(36.dp)
-                                    ) {
-                                        Text("Check Status", fontSize = 11.sp)
-                                    }
-                                    OutlinedButton(
-                                        onClick = { viewModel.reconnectListener(context) },
-                                        enabled = !isReconnecting,
-                                        border = BorderStroke(1.dp, if (isReconnecting) ColorBg4 else ColorOrange.copy(alpha = 0.5f)),
-                                        colors = ButtonDefaults.outlinedButtonColors(contentColor = if (isReconnecting) ColorText3 else ColorOrange),
-                                        shape = RoundedCornerShape(6.dp),
-                                        modifier = Modifier.weight(1f).height(36.dp)
-                                    ) {
-                                        Text(if (isReconnecting) "Reconnecting..." else "Reconnect", fontSize = 11.sp)
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(10.dp))
-                    HorizontalDivider(color = ColorBg3, modifier = Modifier.padding(bottom = 10.dp))
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable {
-                                AppHaptic.trigger(context)
-                                onNavigateToSettings()
-                            }
-                            .padding(vertical = 4.dp)
-                    ) {
-                        Icon(Icons.Outlined.Settings, contentDescription = null, tint = ColorOrange, modifier = Modifier.size(16.dp))
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            "Manage in Settings -> Payment Detection",
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = ColorOrange,
-                            modifier = Modifier.weight(1f)
-                        )
-                        Icon(Icons.AutoMirrored.Outlined.ArrowForwardIos, contentDescription = null, tint = ColorOrange, modifier = Modifier.size(12.dp))
-                    }
-                }
-            }
-
+            PaymentDetectionSection(userPrefs, viewModel, onOpenPaymentSetup)
             Spacer(modifier = Modifier.height(20.dp))
-            if (BuildConfig.DEBUG) {
-                Text(
-                    "DEBUG - NOTIFICATION SIMULATOR",
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = ColorText3,
-                    modifier = Modifier.padding(bottom = 8.dp)
-                )
-
-                Card(
-                    colors = CardDefaults.cardColors(containerColor = ColorBg2),
-                    shape = RoundedCornerShape(12.dp),
-                    border = BorderStroke(1.dp, ColorBlue.copy(alpha = 0.4f)),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(
-                                imageVector = Icons.Default.BugReport,
-                                contentDescription = null,
-                                tint = ColorBlue,
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                "Simulate payment notifications",
-                                fontSize = 12.sp,
-                                color = ColorBlue,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            "Inject test transactions into Needs Review without a real notification.",
-                            fontSize = 11.sp,
-                            color = ColorText3
-                        )
-                        Spacer(modifier = Modifier.height(12.dp))
-
-                        // Test case 1 – GPay, outgoing, should enter Needs Review
-                        DebugTestButton(
-                            label = "GPay: Rs. 450 to Swiggy  [ADDS]",
-                            isIgnored = false,
-                            onClick = {
-                                NotificationProcessor.simulateNotification(
-                                    title = "",
-                                    body = "You paid Rs. 450 to Swiggy",
-                                    packageName = "com.google.android.apps.nbu.paisa.user"
-                                )
-                            }
-                        )
-                        // Test case 2 – PhonePe, outgoing, should enter Needs Review
-                        DebugTestButton(
-                            label = "PhonePe: Rs. 1,500 sent to Rahul Verma  [ADDS]",
-                            isIgnored = false,
-                            onClick = {
-                                NotificationProcessor.simulateNotification(
-                                    title = "",
-                                    body = "Rs. 1,500 sent to Rahul Verma",
-                                    packageName = "com.phonepe.app"
-                                )
-                            }
-                        )
-                        // Test case 3 – Paytm, payment successful, should enter Needs Review
-                        DebugTestButton(
-                            label = "Paytm: Rs. 280 to Uber was successful  [ADDS]",
-                            isIgnored = false,
-                            onClick = {
-                                NotificationProcessor.simulateNotification(
-                                    title = "",
-                                    body = "Payment of Rs. 280 to Uber was successful",
-                                    packageName = "net.one97.paytm"
-                                )
-                            }
-                        )
-                        // Test case 4 – received, should be ignored
-                        DebugTestButton(
-                            label = "X  You received Rs. 2,000 from Rahul  [IGNORE]",
-                            isIgnored = true,
-                            onClick = {
-                                NotificationProcessor.simulateNotification(
-                                    title = "",
-                                    body = "You received Rs. 2,000 from Rahul",
-                                    packageName = "com.google.android.apps.nbu.paisa.user"
-                                )
-                            }
-                        )
-                        // Test case 5 – payment failed, should be ignored
-                        DebugTestButton(
-                            label = "X  Payment of Rs. 500 failed  [IGNORE]",
-                            isIgnored = true,
-                            onClick = {
-                                NotificationProcessor.simulateNotification(
-                                    title = "",
-                                    body = "Payment of Rs. 500 failed",
-                                    packageName = "net.one97.paytm"
-                                )
-                            }
-                        )
-                        // Test case 6 – cashback promo, should be ignored
-                        DebugTestButton(
-                            label = "X  Cashback promo (no outgoing phrase)  [IGNORE]",
-                            isIgnored = true,
-                            onClick = {
-                                NotificationProcessor.simulateNotification(
-                                    title = "",
-                                    body = "Get Rs. 100 cashback on your next payment",
-                                    packageName = "com.phonepe.app"
-                                )
-                            }
-                        )
-                    }
-                }
-            }
+            BudgetPreferencesSection(userPrefs)
+            Spacer(modifier = Modifier.height(20.dp))
+            DataManagementSection(userPrefs, onOpenExport, onOpenBackupRestore, onDataCleared)
+            Spacer(modifier = Modifier.height(36.dp))
         }
-    }
-}
-
-@Composable
-private fun DebugTestButton(
-    label: String,
-    isIgnored: Boolean,
-    onClick: () -> Unit
-) {
-    OutlinedButton(
-        onClick = onClick,
-        border = BorderStroke(
-            1.dp,
-            if (isIgnored) ColorBg4 else ColorOrange.copy(alpha = 0.5f)
-        ),
-        colors = ButtonDefaults.outlinedButtonColors(
-            contentColor = if (isIgnored) ColorText3 else ColorOrange
-        ),
-        shape = RoundedCornerShape(6.dp),
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 3.dp)
-    ) {
-        Text(label, fontSize = 11.sp)
     }
 }

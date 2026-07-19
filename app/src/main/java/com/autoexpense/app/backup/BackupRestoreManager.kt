@@ -4,7 +4,9 @@ import android.content.Context
 import android.net.Uri
 import androidx.room.withTransaction
 import com.autoexpense.app.data.AutoExpenseDatabase
+import com.autoexpense.app.data.FinancialTransactionEntity
 import com.autoexpense.app.data.UserPreferencesRepository
+import com.autoexpense.app.domain.FinancialTransactionMapper
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
@@ -16,7 +18,7 @@ object BackupRestoreManager {
 
     fun getSuggestedBackupFileName(): String {
         val formatter = SimpleDateFormat("yyyy-MM-dd_HHmm", Locale.US)
-        return "AutoExpense_Backup_${formatter.format(Date())}.aexbackup"
+        return "Zors_Backup_${formatter.format(Date())}.aexbackup"
     }
 
     fun formatLastBackupTime(timestamp: Long): String {
@@ -30,6 +32,9 @@ object BackupRestoreManager {
         val userPrefs = UserPreferencesRepository.getInstance(context)
 
         val transactions = db.transactionDao().getAllTransactions().map { TransactionBackupDto.fromEntity(it) }
+        val financialTransactions = db.financialTransactionDao().getAll().map {
+            FinancialTransactionBackupDto.fromEntity(it)
+        }
         val budgets = db.budgetDao().getAllBudgets().map { BudgetBackupDto.fromEntity(it) }
         val customCategories = db.customCategoryDao().getAll().map { CustomCategoryBackupDto.fromEntity(it) }
         val merchantCategories = db.merchantCategoryDao().getAllMappings().map { MerchantCategoryBackupDto.fromEntity(it) }
@@ -44,7 +49,7 @@ object BackupRestoreManager {
 
         AutoExpenseBackupFileDto(
             backupFormat = "AutoExpense",
-            schemaVersion = 2,
+            schemaVersion = 3,
             appVersion = "1.0",
             createdAt = createdAt,
             data = BackupPayloadDto(
@@ -55,6 +60,7 @@ object BackupRestoreManager {
                 merchantAliases = merchantAliases,
                 bills = bills,
                 recurringPayments = recurringPayments,
+                financialTransactions = financialTransactions,
                 preferences = PreferencesBackupDto.fromSnapshot(prefsSnapshot)
             )
         )
@@ -94,6 +100,7 @@ object BackupRestoreManager {
         try {
             db.withTransaction {
                 db.transactionDao().deleteAll()
+                db.financialTransactionDao().deleteAll()
                 db.budgetDao().deleteAll()
                 db.customCategoryDao().deleteAll()
                 db.merchantCategoryDao().deleteAll()
@@ -102,6 +109,18 @@ object BackupRestoreManager {
                 db.recurringPaymentDao().deleteAll()
 
                 db.transactionDao().insertAll(backupDto.data.transactions.map { it.toEntity() })
+                val restoredFinancialTransactions = if (backupDto.data.financialTransactions.isNotEmpty()) {
+                    backupDto.data.financialTransactions.map { it.toEntity() }
+                } else {
+                    // Backups created before schema 3 only contain legacy rows.
+                    // Materialize them here so unified screens retain their history.
+                    backupDto.data.transactions.map { transaction ->
+                        FinancialTransactionEntity.fromDomain(
+                            FinancialTransactionMapper.fromEntity(transaction.toEntity())
+                        )
+                    }
+                }
+                db.financialTransactionDao().upsertAll(restoredFinancialTransactions)
                 db.budgetDao().insertAll(backupDto.data.budgets.map { it.toEntity() })
                 db.customCategoryDao().insertAll(backupDto.data.customCategories.map { it.toEntity() })
                 db.merchantCategoryDao().insertAll(backupDto.data.merchantCategories.map { it.toEntity() })

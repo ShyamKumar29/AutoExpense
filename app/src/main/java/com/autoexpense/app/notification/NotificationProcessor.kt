@@ -191,10 +191,6 @@ object NotificationProcessor {
 
     // ── Debug / test path ─────────────────────────────────────────────────────
 
-    fun simulateNotification(title: String, body: String, packageName: String, context: android.content.Context? = null) {
-        processRawNotification(title, body, packageName, System.currentTimeMillis(), 999, context)
-    }
-
     // ── Shared logic ──────────────────────────────────────────────────────────
 
     private fun processRawNotification(

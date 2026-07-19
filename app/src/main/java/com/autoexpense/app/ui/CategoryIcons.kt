@@ -104,7 +104,7 @@ fun AutoExpenseLogo(
     ) {
         Icon(
             imageVector = Icons.Outlined.Insights,
-            contentDescription = "AutoExpense Logo",
+            contentDescription = "Zors logo",
             tint = tint,
             modifier = Modifier.size(size * 0.58f)
         )

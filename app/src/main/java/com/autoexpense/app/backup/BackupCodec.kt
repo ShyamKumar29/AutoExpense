@@ -7,8 +7,10 @@ sealed class RestoreValidationResult {
     data class Success(val backup: AutoExpenseBackupFileDto) : RestoreValidationResult()
     data class Error(val userMessage: String) : RestoreValidationResult()
 }
-
 object BackupCodec {
+    private const val INVALID_BACKUP_MESSAGE = "This is not a valid Zors backup."
+    private const val NEWER_BACKUP_MESSAGE = "This backup was created by a newer version of Zors. Update the app before restoring it."
+
     fun toJson(backup: AutoExpenseBackupFileDto): String {
         val root = JSONObject()
         root.put("backupFormat", backup.backupFormat)
@@ -43,6 +45,41 @@ object BackupCodec {
             txArray.put(obj)
         }
         dataObj.put("transactions", txArray)
+
+        val financialTransactionsArray = JSONArray()
+        for (tx in backup.data.financialTransactions) {
+            val obj = JSONObject()
+            obj.put("id", tx.id)
+            obj.put("transactionType", tx.transactionType)
+            obj.put("amount", tx.amount)
+            obj.put("currency", tx.currency)
+            obj.put("title", tx.title)
+            obj.put("category", tx.category)
+            obj.put("subCategory", tx.subCategory)
+            obj.put("merchant", tx.merchant)
+            obj.put("accountId", tx.accountId ?: JSONObject.NULL)
+            obj.put("paymentMethod", tx.paymentMethod)
+            obj.put("referenceNumber", tx.referenceNumber)
+            obj.put("notes", tx.notes)
+            obj.put("date", tx.date)
+            obj.put("createdAt", tx.createdAt)
+            obj.put("updatedAt", tx.updatedAt)
+            obj.put("location", tx.location)
+            obj.put("tags", tx.tags)
+            obj.put("isRecurring", tx.isRecurring)
+            obj.put("isAutoDetected", tx.isAutoDetected)
+            obj.put("smsBody", tx.smsBody)
+            obj.put("notificationSource", tx.notificationSource)
+            obj.put("metadata", tx.metadata)
+            obj.put("isDeleted", tx.isDeleted)
+            obj.put("budgetId", tx.budgetId ?: JSONObject.NULL)
+            obj.put("billId", tx.billId ?: JSONObject.NULL)
+            obj.put("subscriptionId", tx.subscriptionId ?: JSONObject.NULL)
+            obj.put("creditCardId", tx.creditCardId ?: JSONObject.NULL)
+            obj.put("status", tx.status)
+            financialTransactionsArray.put(obj)
+        }
+        dataObj.put("financialTransactions", financialTransactionsArray)
 
         val budgetsArray = JSONArray()
         for (b in backup.data.budgets) {
@@ -154,52 +191,52 @@ object BackupCodec {
 
     fun parseAndValidate(jsonString: String): RestoreValidationResult {
         if (jsonString.isBlank()) {
-            return RestoreValidationResult.Error("This is not a valid AutoExpense backup.")
+            return RestoreValidationResult.Error(INVALID_BACKUP_MESSAGE)
         }
         val root = try {
             JSONObject(jsonString)
         } catch (e: Exception) {
-            return RestoreValidationResult.Error("This is not a valid AutoExpense backup.")
+            return RestoreValidationResult.Error(INVALID_BACKUP_MESSAGE)
         }
 
         if (!root.has("backupFormat") || root.isNull("backupFormat") || root.optString("backupFormat") != "AutoExpense") {
-            return RestoreValidationResult.Error("This is not a valid AutoExpense backup.")
+            return RestoreValidationResult.Error(INVALID_BACKUP_MESSAGE)
         }
 
         if (!root.has("schemaVersion") || root.isNull("schemaVersion")) {
-            return RestoreValidationResult.Error("This is not a valid AutoExpense backup.")
+            return RestoreValidationResult.Error(INVALID_BACKUP_MESSAGE)
         }
 
         val schemaVersion = try {
             root.getInt("schemaVersion")
         } catch (e: Exception) {
-            return RestoreValidationResult.Error("This is not a valid AutoExpense backup.")
+            return RestoreValidationResult.Error(INVALID_BACKUP_MESSAGE)
         }
 
-        if (schemaVersion > 2) {
-            return RestoreValidationResult.Error("This backup was created by a newer version of AutoExpense. Update the app before restoring it.")
+        if (schemaVersion > 3) {
+            return RestoreValidationResult.Error(NEWER_BACKUP_MESSAGE)
         }
         if (schemaVersion < 1) {
-            return RestoreValidationResult.Error("This is not a valid AutoExpense backup.")
+            return RestoreValidationResult.Error(INVALID_BACKUP_MESSAGE)
         }
 
         val appVersion = root.optString("appVersion", "1.0")
         val createdAt = root.optString("createdAt", "")
 
         if (!root.has("data") || root.isNull("data")) {
-            return RestoreValidationResult.Error("This is not a valid AutoExpense backup.")
+            return RestoreValidationResult.Error(INVALID_BACKUP_MESSAGE)
         }
 
         val dataObj = try {
             root.getJSONObject("data")
         } catch (e: Exception) {
-            return RestoreValidationResult.Error("This is not a valid AutoExpense backup.")
+            return RestoreValidationResult.Error(INVALID_BACKUP_MESSAGE)
         }
 
         val requiredKeys = listOf("transactions", "budgets", "customCategories", "merchantCategories", "merchantAliases", "preferences")
         for (key in requiredKeys) {
             if (!dataObj.has(key) || dataObj.isNull(key)) {
-                return RestoreValidationResult.Error("This is not a valid AutoExpense backup.")
+                return RestoreValidationResult.Error(INVALID_BACKUP_MESSAGE)
             }
         }
 
@@ -216,7 +253,7 @@ object BackupCodec {
                 val status = obj.getString("status")
                 val timestamp = obj.getLong("timestamp")
                 if (id.isBlank() || amount.isBlank() || source.isBlank() || category.isBlank() || status.isBlank()) {
-                    return RestoreValidationResult.Error("This is not a valid AutoExpense backup.")
+                    return RestoreValidationResult.Error(INVALID_BACKUP_MESSAGE)
                 }
                 txList.add(
                     TransactionBackupDto(
@@ -243,6 +280,55 @@ object BackupCodec {
                 )
             }
 
+            val financialTransactions = mutableListOf<FinancialTransactionBackupDto>()
+            if (dataObj.has("financialTransactions") && !dataObj.isNull("financialTransactions")) {
+                val financialArray = dataObj.getJSONArray("financialTransactions")
+                for (i in 0 until financialArray.length()) {
+                    val obj = financialArray.getJSONObject(i)
+                    val id = obj.getString("id")
+                    val transactionType = obj.getString("transactionType")
+                    val amount = obj.getDouble("amount")
+                    val title = obj.getString("title")
+                    val category = obj.getString("category")
+                    val date = obj.getLong("date")
+                    if (id.isBlank() || transactionType.isBlank() || title.isBlank() || category.isBlank() || date <= 0L || amount < 0.0) {
+                        return RestoreValidationResult.Error(INVALID_BACKUP_MESSAGE)
+                    }
+                    financialTransactions.add(
+                        FinancialTransactionBackupDto(
+                            id = id,
+                            transactionType = transactionType,
+                            amount = amount,
+                            currency = obj.optString("currency", "INR"),
+                            title = title,
+                            category = category,
+                            subCategory = obj.optString("subCategory", ""),
+                            merchant = obj.optString("merchant", ""),
+                            accountId = obj.optionalString("accountId"),
+                            paymentMethod = obj.optString("paymentMethod", "UNKNOWN"),
+                            referenceNumber = obj.optString("referenceNumber", ""),
+                            notes = obj.optString("notes", ""),
+                            date = date,
+                            createdAt = obj.optLong("createdAt", date),
+                            updatedAt = obj.optLong("updatedAt", date),
+                            location = obj.optString("location", ""),
+                            tags = obj.optString("tags", ""),
+                            isRecurring = obj.optBoolean("isRecurring", false),
+                            isAutoDetected = obj.optBoolean("isAutoDetected", false),
+                            smsBody = obj.optString("smsBody", ""),
+                            notificationSource = obj.optString("notificationSource", ""),
+                            metadata = obj.optString("metadata", ""),
+                            isDeleted = obj.optBoolean("isDeleted", false),
+                            budgetId = obj.optionalLong("budgetId"),
+                            billId = obj.optionalString("billId"),
+                            subscriptionId = obj.optionalString("subscriptionId"),
+                            creditCardId = obj.optionalString("creditCardId"),
+                            status = obj.optString("status", "")
+                        )
+                    )
+                }
+            }
+
             val budgetsArray = dataObj.getJSONArray("budgets")
             val budgetsList = mutableListOf<BudgetBackupDto>()
             for (i in 0 until budgetsArray.length()) {
@@ -251,7 +337,7 @@ object BackupCodec {
                 val periodType = obj.getString("periodType")
                 val limitAmount = obj.getDouble("limitAmount")
                 if (categoryKey.isBlank() || periodType.isBlank() || limitAmount <= 0) {
-                    return RestoreValidationResult.Error("This is not a valid AutoExpense backup.")
+                    return RestoreValidationResult.Error(INVALID_BACKUP_MESSAGE)
                 }
                 budgetsList.add(
                     BudgetBackupDto(
@@ -274,7 +360,7 @@ object BackupCodec {
                 val name = obj.getString("name")
                 val iconName = obj.getString("iconName")
                 if (name.isBlank() || iconName.isBlank()) {
-                    return RestoreValidationResult.Error("This is not a valid AutoExpense backup.")
+                    return RestoreValidationResult.Error(INVALID_BACKUP_MESSAGE)
                 }
                 customCategoriesList.add(
                     CustomCategoryBackupDto(
@@ -293,7 +379,7 @@ object BackupCodec {
                 val merchantName = obj.getString("merchantName")
                 val category = obj.getString("category")
                 if (normalizedMerchant.isBlank() || merchantName.isBlank() || category.isBlank()) {
-                    return RestoreValidationResult.Error("This is not a valid AutoExpense backup.")
+                    return RestoreValidationResult.Error(INVALID_BACKUP_MESSAGE)
                 }
                 mcList.add(
                     MerchantCategoryBackupDto(
@@ -313,7 +399,7 @@ object BackupCodec {
                 val rawMerchant = obj.getString("rawMerchant")
                 val displayName = obj.getString("displayName")
                 if (normalizedRawMerchant.isBlank() || rawMerchant.isBlank() || displayName.isBlank()) {
-                    return RestoreValidationResult.Error("This is not a valid AutoExpense backup.")
+                    return RestoreValidationResult.Error(INVALID_BACKUP_MESSAGE)
                 }
                 maList.add(
                     MerchantAliasBackupDto(
@@ -401,6 +487,7 @@ object BackupCodec {
                 merchantAliases = maList,
                 bills = billsList,
                 recurringPayments = recurringList,
+                financialTransactions = financialTransactions,
                 preferences = preferencesDto
             )
 
@@ -414,7 +501,13 @@ object BackupCodec {
 
             return RestoreValidationResult.Success(backup)
         } catch (e: Exception) {
-            return RestoreValidationResult.Error("This is not a valid AutoExpense backup.")
+            return RestoreValidationResult.Error(INVALID_BACKUP_MESSAGE)
         }
     }
+
+    private fun JSONObject.optionalString(key: String): String? =
+        if (isNull(key)) null else optString(key, "").ifBlank { null }
+
+    private fun JSONObject.optionalLong(key: String): Long? =
+        if (isNull(key)) null else optLong(key)
 }

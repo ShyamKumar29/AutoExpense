@@ -274,6 +274,106 @@ data class RecurringPaymentBackupDto(
     }
 }
 
+/**
+ * Complete snapshot of the unified transaction store. This is intentionally
+ * separate from [TransactionBackupDto] so version 1/2 backups remain readable
+ * while records that exist only in financial_transactions are never lost.
+ */
+data class FinancialTransactionBackupDto(
+    val id: String,
+    val transactionType: String,
+    val amount: Double,
+    val currency: String,
+    val title: String,
+    val category: String,
+    val subCategory: String,
+    val merchant: String,
+    val accountId: String?,
+    val paymentMethod: String,
+    val referenceNumber: String,
+    val notes: String,
+    val date: Long,
+    val createdAt: Long,
+    val updatedAt: Long,
+    val location: String,
+    val tags: String,
+    val isRecurring: Boolean,
+    val isAutoDetected: Boolean,
+    val smsBody: String,
+    val notificationSource: String,
+    val metadata: String,
+    val isDeleted: Boolean,
+    val budgetId: Long?,
+    val billId: String?,
+    val subscriptionId: String?,
+    val creditCardId: String?,
+    val status: String
+) {
+    fun toEntity(): FinancialTransactionEntity = FinancialTransactionEntity(
+        id = id,
+        transactionType = transactionType,
+        amount = amount,
+        currency = currency,
+        title = title,
+        category = category,
+        subCategory = subCategory,
+        merchant = merchant,
+        accountId = accountId,
+        paymentMethod = paymentMethod,
+        referenceNumber = referenceNumber,
+        notes = notes,
+        date = date,
+        createdAt = createdAt,
+        updatedAt = updatedAt,
+        location = location,
+        tags = tags,
+        isRecurring = isRecurring,
+        isAutoDetected = isAutoDetected,
+        smsBody = smsBody,
+        notificationSource = notificationSource,
+        metadata = metadata,
+        isDeleted = isDeleted,
+        budgetId = budgetId,
+        billId = billId,
+        subscriptionId = subscriptionId,
+        creditCardId = creditCardId,
+        status = status
+    )
+
+    companion object {
+        fun fromEntity(entity: FinancialTransactionEntity): FinancialTransactionBackupDto = FinancialTransactionBackupDto(
+            id = entity.id,
+            transactionType = entity.transactionType,
+            amount = entity.amount,
+            currency = entity.currency,
+            title = entity.title,
+            category = entity.category,
+            subCategory = entity.subCategory,
+            merchant = entity.merchant,
+            accountId = entity.accountId,
+            paymentMethod = entity.paymentMethod,
+            referenceNumber = entity.referenceNumber,
+            notes = entity.notes,
+            date = entity.date,
+            createdAt = entity.createdAt,
+            updatedAt = entity.updatedAt,
+            location = entity.location,
+            tags = entity.tags,
+            isRecurring = entity.isRecurring,
+            isAutoDetected = entity.isAutoDetected,
+            smsBody = entity.smsBody,
+            notificationSource = entity.notificationSource,
+            metadata = entity.metadata,
+            isDeleted = entity.isDeleted,
+            budgetId = entity.budgetId,
+            billId = entity.billId,
+            subscriptionId = entity.subscriptionId,
+            creditCardId = entity.creditCardId,
+            status = entity.status
+        )
+    }
+}
+
 data class PreferencesBackupDto(
     val userName: String,
     val isOnboardingCompleted: Boolean,
@@ -332,12 +432,13 @@ data class BackupPayloadDto(
     val merchantAliases: List<MerchantAliasBackupDto>,
     val bills: List<BillBackupDto> = emptyList(),
     val recurringPayments: List<RecurringPaymentBackupDto> = emptyList(),
+    val financialTransactions: List<FinancialTransactionBackupDto> = emptyList(),
     val preferences: PreferencesBackupDto
 )
 
 data class AutoExpenseBackupFileDto(
     val backupFormat: String = "AutoExpense",
-    val schemaVersion: Int = 2,
+    val schemaVersion: Int = 3,
     val appVersion: String = "1.0",
     val createdAt: String,
     val data: BackupPayloadDto

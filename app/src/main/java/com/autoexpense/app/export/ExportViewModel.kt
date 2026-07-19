@@ -153,7 +153,7 @@ class ExportViewModel : ViewModel() {
                 val format = selectedFormat.value
 
                 if (format == "PDF Report") {
-                    val filename = "AutoExpense_Report_${dateSuffix}.pdf"
+                    val filename = "Zors_Report_${dateSuffix}.pdf"
                     val result = ExportFileGenerator.generatePdfFile(
                         context = context,
                         filename = filename,
@@ -165,7 +165,7 @@ class ExportViewModel : ViewModel() {
                     generatedFilename.value = filename
                     successMessage.value = "Report generated successfully!"
                 } else {
-                    val filename = "AutoExpense_Transactions_${dateSuffix}.csv"
+                    val filename = "Zors_Transactions_${dateSuffix}.csv"
                     val result = ExportFileGenerator.generateCsvFile(
                         context = context,
                         filename = filename,

@@ -115,7 +115,7 @@ object SmartPaymentsFeedback {
 
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_dialog_info)
-            .setContentTitle("AutoExpense")
+            .setContentTitle("Zors")
             .setContentText(event.message)
             .setStyle(NotificationCompat.BigTextStyle().bigText(event.message))
             .setContentIntent(pendingIntent)

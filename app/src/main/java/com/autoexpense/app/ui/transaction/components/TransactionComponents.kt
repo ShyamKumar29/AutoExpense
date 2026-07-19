@@ -34,7 +34,7 @@ import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.FilterList
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Payments
-import androidx.compose.material.icons.outlined.ReceiptLong
+import androidx.compose.material.icons.automirrored.outlined.ReceiptLong
 import androidx.compose.material.icons.outlined.Repeat
 import androidx.compose.material.icons.outlined.SearchOff
 import androidx.compose.material3.AlertDialog
@@ -45,7 +45,7 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
-import androidx.compose.material3.Divider
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.FilterChip
@@ -124,7 +124,7 @@ fun TransactionSummaryCard(
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             SummaryPill("Today", CashFlowService.formatIndianCurrency(summary.todayAmount), Icons.Outlined.CalendarMonth)
             SummaryPill("Average", CashFlowService.formatIndianCurrency(summary.averageMonthlyAmount), Icons.Outlined.Payments)
-            SummaryPill("Largest", CashFlowService.formatIndianCurrency(summary.largestAmount), Icons.Outlined.ReceiptLong)
+            SummaryPill("Largest", CashFlowService.formatIndianCurrency(summary.largestAmount), Icons.AutoMirrored.Outlined.ReceiptLong)
             SummaryPill("Count", summary.transactionCount.toString(), Icons.Outlined.Info)
             SummaryPill("Net Savings", CashFlowService.formatIndianCurrency(summary.netSavings), Icons.Outlined.AccountBalance)
         }
@@ -196,7 +196,7 @@ fun TransactionCard(
             AeMerchantLogo(
                 label = transaction.merchant.ifBlank { transaction.title },
                 color = categoryColor(transaction.category).takeUnless { transaction.category.isBlank() } ?: accent,
-                icon = if (isIncomeLike) Icons.Outlined.AccountBalance else Icons.Outlined.ReceiptLong
+                icon = if (isIncomeLike) Icons.Outlined.AccountBalance else Icons.AutoMirrored.Outlined.ReceiptLong
             )
             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(transaction.merchant.ifBlank { transaction.title }, color = palette.textPrimary, fontSize = 16.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -256,7 +256,7 @@ fun TransactionList(
     } else if (transactions.isEmpty()) {
         AeEmptyState(
             title = if (transactionType == TransactionType.INCOME) "Your income will appear here." else "No transactions yet.",
-            description = "Add a transaction or wait for AutoExpense to detect one.",
+            description = "Add a transaction or wait for Zors to detect one.",
             icon = Icons.Outlined.SearchOff,
             action = {
                 AeButton(
@@ -523,7 +523,7 @@ fun TransactionDetailsSheet(
         Column(modifier = Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text(transaction.merchant.ifBlank { transaction.title }, color = aePalette().textPrimary, fontSize = 24.sp, fontWeight = FontWeight.Bold)
             Text(CashFlowService.formatIndianCurrency(transaction.amount), color = aePalette().success, fontSize = 32.sp, fontWeight = FontWeight.ExtraBold)
-            Divider(color = aePalette().border)
+            HorizontalDivider(color = aePalette().border)
             DetailRow("Category", transaction.category)
             DetailRow("Type", transaction.transactionType.name.replace('_', ' '))
             DetailRow("Source", transaction.notificationSource.ifBlank { "Manual" })

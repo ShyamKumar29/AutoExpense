@@ -1,7 +1,5 @@
 package com.autoexpense.app.notification
 
-import android.app.NotificationChannel
-import android.app.NotificationManager
 import android.content.ComponentName
 import android.content.Context
 import android.os.Build
@@ -9,7 +7,6 @@ import android.os.PowerManager
 import android.provider.Settings
 import android.service.notification.NotificationListenerService
 import android.util.Log
-import androidx.core.app.NotificationCompat
 import com.autoexpense.app.BuildConfig
 import com.autoexpense.app.TransactionRepository
 import kotlinx.coroutines.CoroutineScope
@@ -38,7 +35,6 @@ object NotificationHealthRepository {
     private const val KEY_LAST_RECONNECT_TIME = "last_reconnect_time"
     private const val KEY_LAST_PAYMENT_DETECTED_TIME = "last_payment_detected_time"
 
-    const val TEST_NOTIFICATION_ID = 88999
     private const val STALE_HEARTBEAT_THRESHOLD_MS = 24L * 60 * 60 * 1000L // 24 hours
 
     private val _sessionConnected = MutableStateFlow(false)
@@ -49,11 +45,6 @@ object NotificationHealthRepository {
 
     private val _reconnectStatusMessage = MutableStateFlow<String?>(null)
     val reconnectStatusMessage: StateFlow<String?> = _reconnectStatusMessage.asStateFlow()
-
-    private val _testDetectionStatus = MutableStateFlow<String?>(null)
-    val testDetectionStatus: StateFlow<String?> = _testDetectionStatus.asStateFlow()
-
-    private val _testDetectedFlag = MutableStateFlow(false)
 
     private val scope = CoroutineScope(Dispatchers.Main)
 
@@ -134,7 +125,7 @@ object NotificationHealthRepository {
 
     fun getHealthWarning(context: Context): String? {
         if (!isNotificationListenerEnabled(context)) {
-            return "Payment detection is off. AutoExpense cannot capture payment notifications."
+            return "Payment detection is off. Zors cannot capture payment notifications."
         }
         if (!_sessionConnected.value) {
             return "Notification access is enabled, but the listener has not connected yet."
@@ -212,63 +203,6 @@ object NotificationHealthRepository {
 
     fun clearReconnectStatusMessage() {
         _reconnectStatusMessage.value = null
-    }
-
-    fun runTestDetection(context: Context) {
-        _testDetectionStatus.value = "Testing notification capture..."
-        _testDetectedFlag.value = false
-
-        try {
-            val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager ?: return
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                val channel = NotificationChannel(
-                    "autoexpense_test_channel",
-                    "Detection Test",
-                    NotificationManager.IMPORTANCE_MIN
-                ).apply {
-                    description = "Used to safely verify notification listener capture"
-                    setShowBadge(false)
-                }
-                nm.createNotificationChannel(channel)
-            }
-
-            val notification = NotificationCompat.Builder(context, "autoexpense_test_channel")
-                .setSmallIcon(android.R.drawable.ic_dialog_info)
-                .setContentTitle("AutoExpense Test Notification")
-                .setContentText("Safe test notification for payment detection verification")
-                .setAutoCancel(true)
-                .setGroup("autoexpense_test_group")
-                .build()
-
-            nm.notify(TEST_NOTIFICATION_ID, notification)
-
-            scope.launch {
-                var elapsed = 0
-                while (elapsed < 3000 && !_testDetectedFlag.value) {
-                    delay(100)
-                    elapsed += 100
-                }
-                if (_testDetectedFlag.value) {
-                    _testDetectionStatus.value = "Test notification received"
-                } else {
-                    _testDetectionStatus.value = "Test notification was not detected"
-                }
-                try { nm.cancel(TEST_NOTIFICATION_ID) } catch (_: Exception) {}
-            }
-        } catch (e: Exception) {
-            if (BuildConfig.DEBUG) {
-                Log.e("NotificationHealth", "runTestDetection failed", e)
-            }
-            _testDetectionStatus.value = "Test notification was not detected"
-        }
-    }
-
-    fun onTestNotificationDetected() {
-        _testDetectedFlag.value = true
-    }
-
-    fun clearTestDetectionStatus() {
-        _testDetectionStatus.value = null
     }
 
     fun isIgnoringBatteryOptimizations(context: Context): Boolean {

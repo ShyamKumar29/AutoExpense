@@ -94,7 +94,11 @@ object BillNotificationParser {
             .replace(Regex("""[^A-Za-z0-9 &._-]"""), " ")
             .replace(Regex("""\s+"""), " ")
             .trim()
-        if (titleProvider.length in 2..40 && !titleProvider.equals("AutoExpense", ignoreCase = true)) {
+        if (
+            titleProvider.length in 2..40 &&
+            !titleProvider.equals("Zors", ignoreCase = true) &&
+            !titleProvider.equals("AutoExpense", ignoreCase = true)
+        ) {
             return titleProvider
         }
         val beforeBill = Regex("""([A-Za-z][A-Za-z0-9 &._-]{1,40})\s+(?:bill|statement|premium|emi)""", RegexOption.IGNORE_CASE)
