@@ -1,4 +1,4 @@
-# ZORS – AI Powered Personal Finance Assistant
+# ZORS – Automatic Expense & Budget Tracker
 
 > An intelligent Android application that automatically tracks expenses and income from payment notifications, manages budgets, detects subscriptions, and provides insightful financial analytics.
 
